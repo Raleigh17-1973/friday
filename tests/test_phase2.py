@@ -83,6 +83,27 @@ def test_semantic_memory_persists_across_instances(tmp_path: Path) -> None:
     assert "communication_preference" in search["semantic_hits"]
 
 
+def test_specialist_memos_include_shared_registry_governance_rules(tmp_path: Path) -> None:
+    manager = _manager_with_temp_db(tmp_path)
+    response = manager.run(
+        ChatRequest(
+            user_id="u-shared-rules",
+            org_id="o-shared-rules",
+            conversation_id="c-shared-rules",
+            message="Build a business case for AI in sales operations",
+            context_packet={},
+        )
+    )
+
+    memos = response["specialist_memos"]
+    assert memos, "Expected at least one specialist memo."
+    for memo in memos:
+        assert memo["confidence"] is not None
+        assert any("Registry rule:" in item for item in memo["evidence"])
+        assert any("read-only advisory mode" in item.lower() for item in memo["assumptions"])
+        assert any("escalation note:" in item.lower() for item in memo["risks"])
+
+
 from apps.api.service import FridayService
 from packages.common.models import ChatRequest
 

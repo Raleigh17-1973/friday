@@ -150,6 +150,39 @@ body {
   border-bottom: 1px solid var(--line);
 }
 
+.topbar-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.reload-runtime {
+  min-height: 40px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  padding: 0 14px;
+  background: var(--surface);
+}
+
+.reload-runtime.ok {
+  border-color: var(--success);
+}
+
+.reload-runtime.error {
+  border-color: var(--danger);
+}
+
+.reload-status {
+  margin: 0;
+  color: var(--muted);
+  max-width: 380px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .transcript-wrap {
   min-height: 0;
   position: relative;

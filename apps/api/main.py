@@ -206,3 +206,11 @@ def admin_agent_status(agent_id: str, payload: dict, request: Request) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"agent": asdict(manifest)}
+
+
+@app.post("/admin/runtime/reload")
+def admin_runtime_reload(request: Request) -> dict:
+    admin_auth.require(request)
+    global service
+    service = FridayService()
+    return {"status": "reloaded"}

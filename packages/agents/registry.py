@@ -7,6 +7,14 @@ from typing import Any
 
 from packages.agents.runtime import Specialist
 
+SHARED_SPECIALIST_RULES: tuple[str, ...] = (
+    "All specialists return structured memos, not raw chat.",
+    "All specialists distinguish facts, assumptions, and unknowns.",
+    "All specialists are read-only unless explicitly upgraded.",
+    "All specialists include confidence and escalation notes.",
+    "All specialists can be overruled only by Friday's synthesis step, not by silence.",
+)
+
 
 @dataclass
 class AgentManifest:
@@ -48,7 +56,11 @@ class AgentRegistry:
         manifest = self._manifests.get(agent_id)
         if manifest is None:
             raise KeyError(f"Unknown agent: {agent_id}")
-        return Specialist(specialist_id=manifest.id, purpose=manifest.purpose)
+        return Specialist(
+            specialist_id=manifest.id,
+            purpose=manifest.purpose,
+            shared_rules=list(SHARED_SPECIALIST_RULES),
+        )
 
     def allowed_tools_for(self, agent_id: str) -> list[str]:
         manifest = self._manifests.get(agent_id)

@@ -250,6 +250,8 @@ export function Workspace() {
   } = useChatState();
 
   const activeThread = threads.find((thread) => thread.id === activeThreadId) ?? threads[0];
+  const [reloadState, setReloadState] = useState<"idle" | "loading" | "ok" | "error">("idle");
+  const [reloadMessage, setReloadMessage] = useState("");
 
   const handleRename = (threadId: string) => {
     const current = threads.find((thread) => thread.id === threadId);
@@ -262,6 +264,26 @@ export function Workspace() {
     const ok = window.confirm("Delete this conversation?");
     if (!ok) return;
     deleteThread(threadId);
+  };
+
+  const handleReloadRuntime = async () => {
+    setReloadState("loading");
+    setReloadMessage("Reloading runtime...");
+    try {
+      const res = await fetch("/api/admin/reload", { method: "POST" });
+      const data = (await res.json()) as { error?: string; detail?: string };
+      if (!res.ok) {
+        const msg = data.error ?? "Reload failed";
+        setReloadState("error");
+        setReloadMessage(data.detail ? `${msg}: ${data.detail}` : msg);
+        return;
+      }
+      setReloadState("ok");
+      setReloadMessage("Runtime reloaded.");
+    } catch (error) {
+      setReloadState("error");
+      setReloadMessage(error instanceof Error ? error.message : "Reload failed");
+    }
   };
 
   return (
@@ -277,9 +299,24 @@ export function Workspace() {
       <section className="center-pane" aria-label="Conversation">
         <header className="topbar">
           <h1>{activeThread?.title ?? "Friday"}</h1>
-          <p role="status" aria-live="polite">
-            Connection: {connectionState}
-          </p>
+          <div className="topbar-meta">
+            <p role="status" aria-live="polite">
+              Connection: {connectionState}
+            </p>
+            <button
+              type="button"
+              className={`reload-runtime ${reloadState}`}
+              onClick={handleReloadRuntime}
+              disabled={reloadState === "loading"}
+            >
+              {reloadState === "loading" ? "Reloading..." : "Reload Runtime"}
+            </button>
+            {reloadMessage ? (
+              <p className="reload-status" role="status" aria-live="polite">
+                {reloadMessage}
+              </p>
+            ) : null}
+          </div>
         </header>
         <Transcript messages={messages} progress={progress} />
         <Composer

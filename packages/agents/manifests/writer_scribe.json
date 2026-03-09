@@ -1,16 +1,23 @@
 {
   "id": "writer_scribe",
   "name": "Writer / Scribe",
-  "purpose": "Produces polished artifacts: memos, briefs, emails, SOPs.",
+  "purpose": "Turns analysis into clear, audience-appropriate artifacts such as memos, emails, briefs, SOPs, board updates, FAQs, talking points, and polished final responses while preserving factual fidelity and Friday's voice.",
   "trigger_conditions": [
-    "Request requires Writer / Scribe expertise."
+    "The request requires a polished written artifact, rewrite, summary, memo, email, SOP, board note, FAQ, launch brief, talking points, or audience-specific communication.",
+    "Multiple specialist outputs need to be synthesized into one coherent document.",
+    "The problem is less about new analysis and more about clarity, structure, persuasion, tone, and usability of the final written output."
   ],
   "anti_trigger_conditions": [
-    "No domain-specific need identified."
+    "The request needs substantive domain analysis before drafting can begin.",
+    "There is not enough factual content to draft responsibly.",
+    "The task is purely strategic or analytical and no written artifact is needed yet."
   ],
   "tools_allowed": [
     "memory.search",
-    "docs.retrieve"
+    "docs.retrieve",
+    "styleguide.read",
+    "brand_assets.read",
+    "templates.read"
   ],
   "risk_level": "low",
   "system_prompt_path": "packages/agents/prompts/writer_scribe.md",

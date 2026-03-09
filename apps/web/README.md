@@ -33,4 +33,5 @@ Open [http://localhost:3000](http://localhost:3000).
 
 Set env vars if needed:
 - `FRIDAY_BACKEND_URL` (default `http://127.0.0.1:8000`)
+- `FRIDAY_ADMIN_API_KEY` (required for `/api/admin/reload` runtime reload button)
 - `OPENAI_API_KEY` (required for `/api/chatkit/session`)

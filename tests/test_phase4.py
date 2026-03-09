@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from apps.api.security import AdminAuth, HTTPException, RateLimiter
-from packages.agents.registry import AgentRegistry
+from packages.agents.registry import AgentRegistry, SHARED_SPECIALIST_RULES
 from packages.tools.mcp import MCPRegistry, MCPServer
 from packages.tools.registry import ToolRegistry
 
@@ -64,3 +64,11 @@ def test_admin_auth_and_rate_limiter(monkeypatch) -> None:
     limiter.check("k1")
     with pytest.raises(HTTPException):
         limiter.check("k1")
+
+
+def test_all_specialists_inherit_shared_registry_rules() -> None:
+    manifests_dir = Path(__file__).resolve().parents[1] / "packages" / "agents" / "manifests"
+    registry = AgentRegistry(manifests_dir)
+    specialist = registry.build_specialist("finance")
+
+    assert specialist.shared_rules == list(SHARED_SPECIALIST_RULES)

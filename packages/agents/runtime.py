@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from packages.common.models import PlannerOutput, SpecialistMemo
 
@@ -9,30 +9,47 @@ from packages.common.models import PlannerOutput, SpecialistMemo
 class Specialist:
     specialist_id: str
     purpose: str
+    shared_rules: list[str] = field(default_factory=list)
 
     def run(self, plan: PlannerOutput, user_message: str) -> SpecialistMemo:
         text = user_message.lower()
+        facts = [
+            f"Planner domains: {', '.join(plan.domains_involved) or 'none'}",
+            f"Planner risk level: {plan.risk_level.value}",
+            f"Requested output format: {plan.output_format}",
+        ]
         assumptions = [
             "Constraints are accurate as provided.",
             "No hidden compliance blockers exist unless flagged.",
+            "Read-only advisory mode applies unless Friday explicitly upgrades permissions.",
         ]
+        unknowns = plan.missing_information or ["No explicit unknowns were provided by the planner."]
         risks = [
             "Execution risk if ownership is unclear.",
             "Decision quality drops if missing information is ignored.",
+            "Escalation note: Escalate when unknowns are material, evidence is contradictory, or risk is medium/high.",
         ]
-        evidence = [
-            f"Planner domains: {', '.join(plan.domains_involved) or 'none'}",
-            f"Planner risk level: {plan.risk_level.value}",
-        ]
+        evidence = [*facts, *[f"Registry rule: {rule}" for rule in self.shared_rules]]
+        analysis = "\n".join(
+            [
+                "Structured memo:",
+                "Facts:",
+                *[f"- {item}" for item in facts],
+                "Assumptions:",
+                *[f"- {item}" for item in assumptions],
+                "Unknowns:",
+                *[f"- {item}" for item in unknowns],
+            ]
+        )
         return SpecialistMemo(
             specialist_id=self.specialist_id,
-            analysis=f"{self.purpose} analysis for: {user_message}",
+            analysis=f"{self.purpose} analysis for: {user_message}\n\n{analysis}",
             recommendation=self._recommendation_for(text, plan.output_format),
             assumptions=assumptions,
             risks=risks,
             evidence=evidence,
             confidence=0.68,
-            questions=plan.missing_information,
+            questions=unknowns,
         )
 
     def _recommendation_for(self, text: str, output_format: str) -> str:
