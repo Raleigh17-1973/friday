@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useMemo, useRef, useState } from "react";
 
 import type { ChatMode, ConnectionState, ConversationThread, FridayMessage } from "@/lib/types";
@@ -18,6 +19,16 @@ function titleFromText(text: string) {
   const normalized = trimmed.replace(/\s+/g, " ");
   return normalized.length > 42 ? `${normalized.slice(0, 42)}…` : normalized;
 }
+
+const STORAGE_KEY = "friday_web_state_v1";
+
+type PersistedState = {
+  threads: ConversationThread[];
+  activeThreadId: string;
+  messagesByThread: Record<string, FridayMessage[]>;
+  mode: ChatMode;
+  contextChips: string[];
+};
 
 export function useChatState() {
   const initialThread: ConversationThread = {
@@ -38,11 +49,50 @@ export function useChatState() {
   const [progress, setProgress] = useState("Ready");
   const [contextChips] = useState<string[]>(["Workspace: Default"]);
   const controllerRef = useRef<AbortController | null>(null);
+  const [hydrated, setHydrated] = useState(false);
 
   const messages = useMemo(
     () => messagesByThread[activeThreadId] ?? [],
     [activeThreadId, messagesByThread]
   );
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        setHydrated(true);
+        return;
+      }
+      const parsed = JSON.parse(raw) as Partial<PersistedState>;
+      if (parsed.threads && parsed.threads.length > 0) {
+        setThreads(parsed.threads);
+      }
+      if (parsed.messagesByThread) {
+        setMessagesByThread(parsed.messagesByThread);
+      }
+      if (parsed.activeThreadId) {
+        setActiveThreadId(parsed.activeThreadId);
+      }
+      if (parsed.mode) {
+        setMode(parsed.mode);
+      }
+      setHydrated(true);
+    } catch {
+      setHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const payload: PersistedState = {
+      threads,
+      activeThreadId,
+      messagesByThread,
+      mode,
+      contextChips,
+    };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  }, [hydrated, threads, activeThreadId, messagesByThread, mode, contextChips]);
 
   const canSend = useMemo(() => !isStreaming && connectionState !== "offline", [isStreaming, connectionState]);
 

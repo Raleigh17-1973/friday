@@ -148,8 +148,8 @@ def test_project_charter_request_returns_charter_draft() -> None:
         )
     )
     answer = response["final_answer"]["direct_answer"].lower()
-    assert "project charter v1" in answer
-    assert "success metrics" in answer
+    assert "before i draft the charter" in answer
+    assert "answer these first" in answer
 
 
 def test_project_charter_asks_foundational_ai_use_case_questions_first() -> None:
@@ -193,4 +193,27 @@ def test_follow_up_message_uses_thread_context() -> None:
         )
     )
     answer = follow_up["final_answer"]["direct_answer"].lower()
+    assert "draft the charter" in answer
+
+
+def test_project_charter_with_enough_inputs_returns_draft() -> None:
+    service = FridayService()
+    response = service.manager.run(
+        ChatRequest(
+            user_id="u-charter-full",
+            org_id="o-charter-full",
+            conversation_id="c-charter-full",
+            message=(
+                "Create a project charter for AI in project management. "
+                "The first workflow is status reporting. "
+                "Main problem is manual rework and delays. "
+                "Audience is the steering committee sponsor. "
+                "Decision deadline is Q3 kickoff. "
+                "Primary metric is cycle time reduction."
+            ),
+            context_packet={},
+        )
+    )
+    answer = response["final_answer"]["direct_answer"].lower()
     assert "project charter v1" in answer
+    assert "success metrics" in answer

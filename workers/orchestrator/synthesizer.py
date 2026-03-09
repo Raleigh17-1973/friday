@@ -132,6 +132,22 @@ def _project_charter_draft(questions: list[str]) -> str:
     return "\n".join(lines)
 
 
+def _project_charter_discovery(questions: list[str]) -> str:
+    lines = [
+        "Before I draft the charter, I need a few inputs so it is credible and usable.",
+        "",
+        "Answer these first (bullets are fine):",
+    ]
+    lines.extend([f"- {question}" for question in questions[:8]])
+    lines.extend(
+        [
+            "",
+            "Once you answer, I will generate a complete PMBOK-aligned charter draft with scope, stakeholders, milestones, RAID, and governance.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _general_actionable_response(questions: list[str]) -> str:
     lines = [
         "Here is a practical starting plan you can execute immediately:",
@@ -163,7 +179,10 @@ def synthesize(plan: PlannerOutput, memos: list[SpecialistMemo], critic: CriticR
     prompt = plan.problem_statement.strip()
     prompt_lower = prompt.lower()
     if "project charter" in prompt_lower:
-        direct_answer = _project_charter_draft(plan.missing_information)
+        if plan.missing_information:
+            direct_answer = _project_charter_discovery(plan.missing_information)
+        else:
+            direct_answer = _project_charter_draft(plan.missing_information)
     elif "template" in prompt_lower:
         direct_answer = _template_response(plan.missing_information)
     elif plan.output_format == "business_case_draft":
