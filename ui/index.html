@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Friday</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="header">
+        <h1>Friday</h1>
+        <div id="status">Online</div>
+      </header>
+      <section id="messages" class="messages" aria-live="polite"></section>
+      <form id="chatForm" class="composer">
+        <textarea id="messageInput" placeholder="Ask Friday anything..." required></textarea>
+        <button id="sendBtn" type="submit">Send</button>
+      </form>
+    </main>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

@@ -1,0 +1,16 @@
+[project]
+name = "friday"
+version = "0.1.0"
+description = "Friday multi-agent business platform"
+requires-python = ">=3.10"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
