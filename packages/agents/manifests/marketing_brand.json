@@ -1,0 +1,22 @@
+{
+  "id": "marketing_brand",
+  "name": "Marketing / Brand",
+  "purpose": "Handles messaging, positioning, and campaign strategy.",
+  "trigger_conditions": [
+    "Request requires Marketing / Brand expertise."
+  ],
+  "anti_trigger_conditions": [
+    "No domain-specific need identified."
+  ],
+  "tools_allowed": [
+    "memory.search",
+    "docs.retrieve"
+  ],
+  "risk_level": "low",
+  "system_prompt_path": "packages/agents/prompts/marketing_brand.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/marketing_brand.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

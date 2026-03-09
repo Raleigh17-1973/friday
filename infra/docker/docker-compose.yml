@@ -1,0 +1,72 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: friday-postgres
+    environment:
+      POSTGRES_USER: friday
+      POSTGRES_PASSWORD: friday
+      POSTGRES_DB: friday
+    ports:
+      - "5432:5432"
+    volumes:
+      - friday_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U friday -d friday"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: friday-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - friday_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    container_name: friday-temporal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgresql
+      DB_PORT: 5432
+      POSTGRES_USER: friday
+      POSTGRES_PWD: friday
+      POSTGRES_SEEDS: postgres
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    ports:
+      - "7233:7233"
+    healthcheck:
+      test: ["CMD-SHELL", "tctl --address localhost:7233 cluster health | grep -qi SERVING"]
+      interval: 10s
+      timeout: 8s
+      retries: 30
+
+  temporal-ui:
+    image: temporalio/ui:2.30.3
+    container_name: friday-temporal-ui
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_UI_PORT: 8080
+    ports:
+      - "8088:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  friday_postgres_data:
+  friday_redis_data:

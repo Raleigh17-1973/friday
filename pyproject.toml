@@ -1,16 +1,23 @@
 [project]
 name = "friday"
-version = "0.1.0"
-description = "Friday multi-agent business platform"
-requires-python = ">=3.10"
-dependencies = []
+version = "0.2.0"
+description = "Friday multi-agent business operating system"
+requires-python = ">=3.9"
+dependencies = [
+  "fastapi>=0.110.0",
+  "pydantic>=2.6.0",
+  "uvicorn>=0.29.0",
+]
+
+[project.optional-dependencies]
+phase3 = [
+  "psycopg[binary]>=3.1.0",
+  "temporalio>=1.7.0",
+]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-package-dir = {"" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.pytest.ini_options]
+pythonpath = ["."]

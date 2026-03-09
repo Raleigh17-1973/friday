@@ -1,0 +1,22 @@
+{
+  "id": "agent_architect",
+  "name": "Agent Architect",
+  "purpose": "Proposes new agents, tools, and eval suites for repeated gaps.",
+  "trigger_conditions": [
+    "Request requires Agent Architect expertise."
+  ],
+  "anti_trigger_conditions": [
+    "No domain-specific need identified."
+  ],
+  "tools_allowed": [
+    "memory.search",
+    "docs.retrieve"
+  ],
+  "risk_level": "low",
+  "system_prompt_path": "packages/agents/prompts/agent_architect.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/agent_architect.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

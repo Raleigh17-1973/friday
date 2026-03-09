@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from packages.agents.registry import AgentRegistry
+from packages.governance.approvals import ApprovalService
+from packages.governance.audit import AuditLog
+from packages.governance.policy import PolicyEngine
+from packages.governance.run_store import PostgresRunStore, SQLiteRunStore
+from packages.memory.service import LayeredMemoryService
+from packages.tools.mcp import MCPRegistry
+from packages.tools.policy_wrapped_tools import ToolExecutor
+from packages.tools.registry import ToolRegistry
+from workers.evals.harness import EvalHarness
+from workers.orchestrator.runtime import FridayManager
+from workers.orchestrator.workflows import InProcessWorkflowEngine, TemporalWorkflowEngine
+from workers.reflection.worker import ReflectionWorker
+
+
+class FridayService:
+    def __init__(self) -> None:
+        self.root = Path(__file__).resolve().parents[2]
+        manifests_dir = self.root / "packages" / "agents" / "manifests"
+        memory_db = self.root / "data" / "friday_memory.sqlite3"
+        workflow_db = self.root / "data" / "friday_workflows.sqlite3"
+        audit_db = self.root / "data" / "friday_audit.sqlite3"
+        mcp_registry_file = self.root / "data" / "mcp_servers.json"
+        audit_dsn = os.getenv("FRIDAY_AUDIT_DATABASE_URL", "").strip()
+        workflow_engine = os.getenv("FRIDAY_WORKFLOW_ENGINE", "inprocess").strip().lower()
+        self.registry = AgentRegistry(manifests_dir=manifests_dir)
+        self.memory = LayeredMemoryService.with_sqlite(memory_db)
+        self.policy = PolicyEngine()
+        self.mcp = MCPRegistry(mcp_registry_file)
+        self.tools = ToolRegistry(self.mcp)
+        self.approvals = ApprovalService()
+        run_store = PostgresRunStore(audit_dsn) if audit_dsn else SQLiteRunStore(audit_db)
+        self.audit = AuditLog(run_store=run_store)
+        self.manager = FridayManager(
+            registry=self.registry,
+            memory=self.memory,
+            policy=self.policy,
+            approvals=self.approvals,
+            audit=self.audit,
+            tool_executor=ToolExecutor(self.root),
+        )
+        if workflow_engine == "temporal":
+            self.workflow = TemporalWorkflowEngine(
+                address=os.getenv("TEMPORAL_ADDRESS", "localhost:7233"),
+                namespace=os.getenv("TEMPORAL_NAMESPACE", "default"),
+                task_queue=os.getenv("TEMPORAL_TASK_QUEUE", "friday-runs"),
+            )
+        else:
+            self.workflow = InProcessWorkflowEngine(workflow_db)
+        self.eval_harness = EvalHarness(self.root)
+        self.reflection = ReflectionWorker()
+
+    def execute_chat_payload(self, payload: dict) -> dict:
+        from packages.common.models import ChatRequest
+
+        message = str(payload.get("message") or "").strip()
+        if not message:
+            raise ValueError("message is required")
+
+        request = ChatRequest(
+            user_id=str(payload.get("user_id") or "user-1"),
+            org_id=str(payload.get("org_id") or "org-1"),
+            conversation_id=str(payload.get("conversation_id") or "conv-1"),
+            message=message,
+            context_packet=payload.get("context_packet") or {},
+        )
+        response = self.manager.run(request)
+        trace = self.audit.get_run(response["run_id"])
+        if trace is not None:
+            response["reflection"] = self.reflection.reflect(trace, self.memory).to_dict()
+        return response
+
+    def get_dashboard_metrics(self) -> dict:
+        agents = self.registry.list_active()
+        mcp_servers = self.mcp.list_servers()
+        workflows = {"engine": self.workflow.__class__.__name__}
+        return {
+            "active_agents": len(agents),
+            "mcp_servers_total": len(mcp_servers),
+            "mcp_servers_enabled": len([s for s in mcp_servers if s.enabled]),
+            "tool_count": len(self.tools.list_tools()),
+            "workflow": workflows,
+        }

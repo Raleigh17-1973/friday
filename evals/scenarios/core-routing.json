@@ -1,0 +1,17 @@
+[
+  {
+    "id": "finance-ops-1",
+    "message": "We need ROI and process bottleneck fixes for next quarter",
+    "expected_experts": ["finance", "operations"]
+  },
+  {
+    "id": "risk-1",
+    "message": "Stress test assumptions and identify major failure modes",
+    "expected_experts": ["critic_red_team"]
+  },
+  {
+    "id": "research-1",
+    "message": "Research competitor pricing and market benchmarks",
+    "expected_experts": ["research"]
+  }
+]

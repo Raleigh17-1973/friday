@@ -1,0 +1,22 @@
+{
+  "id": "legal_compliance",
+  "name": "Legal / Compliance",
+  "purpose": "Flags legal exposure and policy/compliance risk.",
+  "trigger_conditions": [
+    "Request requires Legal / Compliance expertise."
+  ],
+  "anti_trigger_conditions": [
+    "No domain-specific need identified."
+  ],
+  "tools_allowed": [
+    "memory.search",
+    "docs.retrieve"
+  ],
+  "risk_level": "medium",
+  "system_prompt_path": "packages/agents/prompts/legal_compliance.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/legal_compliance.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

@@ -1,0 +1,22 @@
+{
+  "id": "customer_success_support",
+  "name": "Customer Success / Support",
+  "purpose": "Improves service playbooks and churn prevention.",
+  "trigger_conditions": [
+    "Request requires Customer Success / Support expertise."
+  ],
+  "anti_trigger_conditions": [
+    "No domain-specific need identified."
+  ],
+  "tools_allowed": [
+    "memory.search",
+    "docs.retrieve"
+  ],
+  "risk_level": "low",
+  "system_prompt_path": "packages/agents/prompts/customer_success_support.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/customer_success_support.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

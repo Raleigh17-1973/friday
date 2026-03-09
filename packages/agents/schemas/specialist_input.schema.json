@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "required": [
+    "problem_statement",
+    "context_packet",
+    "constraints"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "id": "research",
+  "name": "Research",
+  "purpose": "Performs external information gathering and synthesis.",
+  "trigger_conditions": [
+    "Request requires Research expertise."
+  ],
+  "anti_trigger_conditions": [
+    "No domain-specific need identified."
+  ],
+  "tools_allowed": [
+    "memory.search",
+    "docs.retrieve",
+    "web.research"
+  ],
+  "risk_level": "low",
+  "system_prompt_path": "packages/agents/prompts/research.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/research.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

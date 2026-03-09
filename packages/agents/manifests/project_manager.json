@@ -1,0 +1,22 @@
+{
+  "id": "project_manager",
+  "name": "Project Manager",
+  "purpose": "Creates PMBOK-aligned project charters, plans, schedules, governance, RAID logs, and execution controls for cross-functional delivery.",
+  "trigger_conditions": [
+    "Request involves project charter, planning, scheduling, governance, RAID management, or PMO execution."
+  ],
+  "anti_trigger_conditions": [
+    "Request is purely non-project domain with no delivery, timeline, or stakeholder-management implications."
+  ],
+  "tools_allowed": [
+    "memory.search",
+    "docs.retrieve"
+  ],
+  "risk_level": "low",
+  "system_prompt_path": "packages/agents/prompts/project_manager.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/project_manager.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

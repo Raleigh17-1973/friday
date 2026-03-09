@@ -1,0 +1,22 @@
+{
+  "id": "security_risk",
+  "name": "Security / Risk",
+  "purpose": "Evaluates data exposure, controls, and risk posture.",
+  "trigger_conditions": [
+    "Request requires Security / Risk expertise."
+  ],
+  "anti_trigger_conditions": [
+    "No domain-specific need identified."
+  ],
+  "tools_allowed": [
+    "memory.search",
+    "docs.retrieve"
+  ],
+  "risk_level": "low",
+  "system_prompt_path": "packages/agents/prompts/security_risk.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/security_risk.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

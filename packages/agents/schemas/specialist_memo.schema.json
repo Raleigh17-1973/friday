@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "required": [
+    "analysis",
+    "recommendation",
+    "assumptions",
+    "risks",
+    "evidence",
+    "confidence",
+    "questions"
+  ]
+}
