@@ -6,3 +6,5 @@ __pycache__/
 data/
 
 *.egg-info/
+apps/web/node_modules/
+apps/web/.next/
