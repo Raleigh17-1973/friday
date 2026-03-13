@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
+
+_log = logging.getLogger(__name__)
 
 from packages.agents.registry import AgentRegistry
 from packages.common.models import (
@@ -80,7 +84,8 @@ class FridayManager:
             risk_level=plan.risk_level,
         )
 
-        memos = [specialist.run(plan=plan, user_message=request.message) for specialist in specialists]
+        # Phase 2a: parallel specialist dispatch
+        memos = self._run_specialists_parallel(specialists, plan, request.message)
         for memo in memos:
             validate_required_fields(memo, SPECIALIST_MEMO_SCHEMA, "SpecialistMemo")
 
@@ -89,6 +94,23 @@ class FridayManager:
 
         final_answer = synthesize(plan, memos, critic_report, llm=self._llm)
         validate_required_fields(final_answer, FINAL_ANSWER_PACKAGE_SCHEMA, "FinalAnswerPackage")
+
+        # Phase 2b: iterative refinement — if confidence is low and LLM is available,
+        # run a second synthesis pass with the critic's objections injected more forcefully
+        if (
+            self._llm is not None
+            and final_answer.confidence < 0.65
+            and plan.output_format in ("full_deliverable", "business_case_draft")
+        ):
+            _log.info(
+                "Confidence %.2f below threshold — running refinement pass for run %s",
+                final_answer.confidence,
+                run_id,
+            )
+            refined = synthesize(plan, memos, critic_report, llm=self._llm, refinement_pass=True)
+            if refined.confidence >= final_answer.confidence:
+                final_answer = refined
+                validate_required_fields(final_answer, FINAL_ANSWER_PACKAGE_SCHEMA, "FinalAnswerPackage")
 
         requested_scopes = list(request.context_packet.get("requested_write_scopes", []))
         action_mode = ActionMode.WRITE if requested_scopes else ActionMode.READ_ONLY
@@ -165,6 +187,31 @@ class FridayManager:
                 "episodic_items": len(memory_bundle.episodic),
             },
         }
+
+    def _run_specialists_parallel(self, specialists, plan, user_message: str) -> list:
+        """Run all specialists concurrently. Falls back to sequential on error."""
+        if not specialists:
+            return []
+        if len(specialists) == 1:
+            return [specialists[0].run(plan=plan, user_message=user_message)]
+        memos = [None] * len(specialists)
+        try:
+            with ThreadPoolExecutor(max_workers=len(specialists)) as pool:
+                future_to_idx = {
+                    pool.submit(s.run, plan=plan, user_message=user_message): i
+                    for i, s in enumerate(specialists)
+                }
+                for future in as_completed(future_to_idx):
+                    idx = future_to_idx[future]
+                    try:
+                        memos[idx] = future.result()
+                    except Exception as exc:
+                        _log.warning("Specialist %s failed: %s — using stub", specialists[idx].specialist_id, exc)
+                        memos[idx] = specialists[idx]._run_stub(plan, user_message)
+        except Exception as exc:
+            _log.warning("Parallel dispatch failed (%s) — falling back to sequential", exc)
+            return [s.run(plan=plan, user_message=user_message) for s in specialists]
+        return [m for m in memos if m is not None]
 
     def _resolve_planning_message(self, latest_message: str, conversation_history: list[dict]) -> str:
         text = latest_message.strip()

@@ -56,10 +56,21 @@ class AgentRegistry:
         manifest = self._manifests.get(agent_id)
         if manifest is None:
             raise KeyError(f"Unknown agent: {agent_id}")
+
+        # Load the rich .md system prompt.
+        # manifests_dir = packages/agents/manifests → .parent.parent.parent = project root
+        system_prompt = ""
+        if manifest.system_prompt_path:
+            project_root = self._manifests_dir.parent.parent.parent
+            prompt_path = project_root / manifest.system_prompt_path
+            if prompt_path.exists():
+                system_prompt = prompt_path.read_text(encoding="utf-8").strip()
+
         return Specialist(
             specialist_id=manifest.id,
             purpose=manifest.purpose,
             shared_rules=list(SHARED_SPECIALIST_RULES),
+            system_prompt=system_prompt,
         )
 
     def allowed_tools_for(self, agent_id: str) -> list[str]:

@@ -27,6 +27,29 @@ Respond ONLY with valid JSON (no markdown fences):
   "confidence": <0.0-1.0 float>
 }"""
 
+_SYNTHESIZER_REFINEMENT_SYSTEM = """\
+You are Friday's synthesis engine performing a REFINEMENT PASS. A previous synthesis attempt had low confidence.
+
+Your task: produce a stronger, more complete version of the deliverable by directly addressing the critic's objections and blind spots.
+
+RULES:
+1. The direct_answer must be more complete and specific than the first attempt
+2. Directly address every blind spot and challenged assumption from the critic
+3. If numbers were provided in the problem, use them — show calculations
+4. Do NOT produce a template or placeholder text
+5. Your confidence score must be higher than the previous attempt
+
+Respond ONLY with valid JSON (no markdown fences):
+{
+  "direct_answer": "<improved, complete deliverable — more specific than the first pass>",
+  "executive_summary": "<1-2 sentence summary>",
+  "key_assumptions": ["<assumption 1>"],
+  "major_risks": ["<risk 1>"],
+  "recommended_next_steps": ["<step 1>", "<step 2>"],
+  "what_i_would_do_first": "<single most important first action>",
+  "confidence": <0.0-1.0 float — aim higher than previous attempt>
+}"""
+
 _STUB_WARNING = (
     "\n\n---\n⚠️ *Running in limited mode (LLM unavailable). "
     "This is a structured outline using your data. Connect a working API key for full AI analysis.*"
@@ -347,6 +370,7 @@ def synthesize(
     memos: list[SpecialistMemo],
     critic: CriticReport,
     llm: "LLMProvider | None" = None,
+    refinement_pass: bool = False,
 ) -> FinalAnswerPackage:
     experts = [memo.specialist_id for memo in memos]
     top_recs = [memo.recommendation for memo in memos[:4]]
@@ -372,7 +396,8 @@ def synthesize(
                 f"Specialist memos:\n{memos_text}\n\n"
                 f"Critic review:\n{critic_text}"
             )
-            parsed = llm.complete_json(_SYNTHESIZER_SYSTEM, llm_prompt, max_tokens=3000)
+            system = _SYNTHESIZER_REFINEMENT_SYSTEM if refinement_pass else _SYNTHESIZER_SYSTEM
+            parsed = llm.complete_json(system, llm_prompt, max_tokens=3000)
             if parsed and "direct_answer" in parsed:
                 return FinalAnswerPackage(
                     direct_answer=str(parsed["direct_answer"]),

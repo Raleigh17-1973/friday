@@ -8,23 +8,40 @@ from packages.common.models import PlannerOutput, SpecialistMemo
 if TYPE_CHECKING:
     from packages.llm.base import LLMProvider
 
-_SPECIALIST_SYSTEM = """\
-You are a {purpose} specialist in Friday, a multi-agent business operating system.
+# Fallback system prompt used when no .md prompt file is loaded
+_SPECIALIST_SYSTEM_FALLBACK = """\
+You are Friday's {purpose} specialist.
 Your job is to analyze business problems and produce a structured expert memo.
 
 Rules:
 {rules}
+"""
 
-Respond ONLY with valid JSON (no markdown fences) matching this exact structure:
-{{
-  "analysis": "<detailed multi-sentence analysis>",
-  "recommendation": "<specific, actionable recommendation>",
-  "assumptions": ["<assumption 1>", "<assumption 2>"],
-  "risks": ["<risk 1>", "<risk 2>"],
-  "evidence": ["<evidence point 1>"],
+# Appended to every specialist prompt (loaded or fallback) to enforce output format + quality
+_OUTPUT_CONTRACT = """
+---
+## Response Format
+
+You are operating as an internal specialist agent. The synthesizer will combine your memo with other specialists into a final deliverable. Do your analysis rigorously.
+
+Respond ONLY with valid JSON (no markdown fences):
+{
+  "analysis": "<detailed analysis — if numbers are provided, USE them; show calculations, not just conclusions>",
+  "recommendation": "<ONE clear recommendation — GO / NO-GO / CONDITIONAL with your reasoning; never say 'it depends' without specifying what>",
+  "assumptions": ["<state every assumption explicitly, especially ones that would change your recommendation if wrong>"],
+  "risks": ["<specific risk with likelihood and impact where possible>"],
+  "evidence": ["<data point or calculation from the problem statement>"],
   "confidence": <0.0-1.0 float>,
-  "questions": ["<clarifying question if info is missing>"]
-}}"""
+  "questions": ["<only list if critical data is genuinely absent and your recommendation depends on it>"]
+}
+
+CRITICAL QUALITY RULES:
+1. If the problem includes numbers (costs, hours, %, headcount), compute with them — do not say "you would need to calculate"
+2. Your recommendation must be a clear directive — not "consider", "explore", or "it depends"
+3. Anti-sycophancy: your job is to find the real risks and gaps, not to validate what sounds good
+4. If the answer is obvious, say so clearly and give your confidence level
+5. Confidence 0.9+ = high certainty; 0.7-0.9 = solid reasoning, minor gaps; below 0.7 = flag what you need
+"""
 
 
 @dataclass
@@ -32,6 +49,7 @@ class Specialist:
     specialist_id: str
     purpose: str
     shared_rules: list[str] = field(default_factory=list)
+    system_prompt: str = field(default="")
     llm: "LLMProvider | None" = field(default=None, repr=False)
 
     def run(self, plan: PlannerOutput, user_message: str) -> SpecialistMemo:
@@ -42,19 +60,28 @@ class Specialist:
                 pass
         return self._run_stub(plan, user_message)
 
+    def _build_system_prompt(self) -> str:
+        if self.system_prompt:
+            # Use the rich .md prompt, append the JSON output contract
+            return self.system_prompt + "\n" + _OUTPUT_CONTRACT
+        else:
+            # Fallback: generic template + contract
+            rules_text = "\n".join(f"- {r}" for r in self.shared_rules) if self.shared_rules else "- Be precise and evidence-based."
+            base = _SPECIALIST_SYSTEM_FALLBACK.format(purpose=self.purpose, rules=rules_text)
+            return base + _OUTPUT_CONTRACT
+
     def _run_with_llm(self, plan: PlannerOutput, user_message: str) -> SpecialistMemo:
         assert self.llm is not None
-        rules_text = "\n".join(f"- {r}" for r in self.shared_rules) if self.shared_rules else "- Be precise and evidence-based."
-        system = _SPECIALIST_SYSTEM.format(purpose=self.purpose, rules=rules_text)
+        system = self._build_system_prompt()
         prompt = (
             f"Problem: {user_message}\n\n"
             f"Planner context:\n"
-            f"- Domains: {', '.join(plan.domains_involved) or 'general'}\n"
+            f"- Domains involved: {', '.join(plan.domains_involved) or 'general'}\n"
             f"- Risk level: {plan.risk_level.value}\n"
-            f"- Output format: {plan.output_format}\n"
-            f"- Missing information: {', '.join(plan.missing_information) or 'none identified'}"
+            f"- Output format requested: {plan.output_format}\n"
+            f"- Missing information (if any): {', '.join(plan.missing_information) or 'none identified'}"
         )
-        parsed = self.llm.complete_json(system, prompt, max_tokens=1024)
+        parsed = self.llm.complete_json(system, prompt, max_tokens=1500)
         if parsed and "analysis" in parsed and "recommendation" in parsed:
             return SpecialistMemo(
                 specialist_id=self.specialist_id,
@@ -84,7 +111,6 @@ class Specialist:
         risks = [
             "Execution risk if ownership is unclear.",
             "Decision quality drops if missing information is ignored.",
-            "Escalation note: Escalate when unknowns are material, evidence is contradictory, or risk is medium/high.",
         ]
         evidence = [*facts, *[f"Registry rule: {rule}" for rule in self.shared_rules]]
         analysis = "\n".join(
