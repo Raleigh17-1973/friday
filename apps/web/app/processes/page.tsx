@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { PageShell } from "@/components/page-shell";
 
 const BACKEND = process.env.NEXT_PUBLIC_FRIDAY_BACKEND_URL ?? "http://127.0.0.1:8000";
 
@@ -67,57 +68,45 @@ export default function ProcessesPage() {
   const filtered = filter === "all" ? docs : docs.filter((d) => d.status === filter);
 
   return (
-    <main className="processes-page">
-      <header className="processes-header">
-        <div>
-          <h1>Process Library</h1>
-          <p className="processes-subtitle">
-            Document, version, and govern your business processes
-          </p>
-        </div>
-        <Link href="/" className="new-process-btn">
-          + Map New Process
-        </Link>
-      </header>
-
+    <PageShell
+      title="Process Library"
+      subtitle="Document, version, and govern your business processes"
+      headerActions={
+        <Link href="/" className="btn btn-primary">+ Map New Process</Link>
+      }
+    >
       {health && (
-        <section className="health-bar" aria-label="Library health summary">
-          <div className="health-stat">
-            <span className="health-num">{health.total_processes}</span>
-            <span className="health-label">Total</span>
+        <div className="stat-card-row">
+          <div className="stat-card">
+            <div className="stat-card-label">Total</div>
+            <div className="stat-card-value">{health.total_processes}</div>
           </div>
-          <div className="health-stat">
-            <span className="health-num">{Math.round(health.avg_completeness * 100)}%</span>
-            <span className="health-label">Avg completeness</span>
+          <div className="stat-card">
+            <div className="stat-card-label">Active</div>
+            <div className="stat-card-value" style={{ color: "#16a34a" }}>{health.active_count}</div>
           </div>
-          <div className="health-stat">
-            <span className="health-num">{health.active_count}</span>
-            <span className="health-label">Active</span>
+          <div className="stat-card">
+            <div className="stat-card-label">Draft</div>
+            <div className="stat-card-value" style={{ color: "#d97706" }}>{health.draft_count}</div>
           </div>
-          <div className="health-stat">
-            <span className="health-num">{health.draft_count}</span>
-            <span className="health-label">Draft</span>
+          <div className="stat-card">
+            <div className="stat-card-label">Avg Completeness</div>
+            <div className="stat-card-value">{Math.round(health.avg_completeness * 100)}%</div>
           </div>
           {health.stale_count > 0 && (
-            <div className="health-stat health-warn">
-              <span className="health-num">{health.stale_count}</span>
-              <span className="health-label">Stale (90d+)</span>
+            <div className="stat-card">
+              <div className="stat-card-label">Stale (90d+)</div>
+              <div className="stat-card-value" style={{ color: "#dc2626" }}>{health.stale_count}</div>
             </div>
           )}
-          {health.low_completeness_count > 0 && (
-            <div className="health-stat health-warn">
-              <span className="health-num">{health.low_completeness_count}</span>
-              <span className="health-label">Incomplete</span>
-            </div>
-          )}
-        </section>
+        </div>
       )}
 
-      <div className="processes-filter" role="group" aria-label="Filter by status">
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.25rem" }} role="group" aria-label="Filter by status">
         {(["all", "active", "draft", "deprecated"] as const).map((f) => (
           <button
             key={f}
-            className={filter === f ? "filter-btn active" : "filter-btn"}
+            className={`btn ${filter === f ? "btn-primary" : "btn-secondary"} btn-sm`}
             onClick={() => setFilter(f)}
           >
             {f.charAt(0).toUpperCase() + f.slice(1)}
@@ -126,42 +115,47 @@ export default function ProcessesPage() {
       </div>
 
       {loading ? (
-        <p className="processes-empty">Loading…</p>
+        <div className="loading-skeleton">
+          {[...Array(4)].map((_, i) => <div key={i} className="loading-skeleton-row" style={{ height: "6rem", borderRadius: "0.75rem" }} />)}
+        </div>
       ) : filtered.length === 0 ? (
-        <div className="processes-empty">
-          <p>No processes yet.</p>
-          <Link href="/">Ask Friday to map your first process →</Link>
+        <div className="empty-state">
+          <div className="empty-state-icon">⚙️</div>
+          <p className="empty-state-title">No processes yet</p>
+          <p className="empty-state-body">Ask Friday to map your first business process.</p>
+          <Link href="/" className="btn btn-primary">Start Mapping</Link>
         </div>
       ) : (
-        <ul className="process-grid" aria-label="Process list">
+        <ul className="process-grid" aria-label="Process list" style={{ listStyle: "none", padding: 0, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "1rem" }}>
           {filtered.map((doc) => (
-            <li key={doc.id} className="process-card">
-              <Link href={`/processes/${doc.id}`} className="process-card-link">
-                <div className="process-card-top">
-                  <h2 className="process-card-name">{doc.process_name}</h2>
+            <li key={doc.id} className="card">
+              <Link href={`/processes/${doc.id}`} style={{ textDecoration: "none", display: "block" }}>
+                <div className="card-header" style={{ justifyContent: "space-between" }}>
+                  <span style={{ fontWeight: 600, color: "var(--text)", fontSize: "0.9375rem" }}>{doc.process_name}</span>
                   <CompletenessRing score={doc.completeness_score} />
                 </div>
-                <p className="process-card-trigger">
-                  {doc.trigger ? `↳ ${doc.trigger}` : "No trigger defined"}
-                </p>
-                <div className="process-card-meta">
-                  <StatusChip status={doc.status} />
-                  <span className="process-version">v{doc.version}</span>
-                  {doc.roles.length > 0 && (
-                    <span className="process-roles">
-                      {doc.roles.slice(0, 2).join(", ")}
-                      {doc.roles.length > 2 ? ` +${doc.roles.length - 2}` : ""}
-                    </span>
-                  )}
+                <div className="card-body" style={{ paddingTop: "0.75rem" }}>
+                  <p style={{ fontSize: "0.8125rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+                    {doc.trigger ? `↳ ${doc.trigger}` : "No trigger defined"}
+                  </p>
+                  <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+                    <StatusChip status={doc.status} />
+                    <span className="badge badge-neutral">v{doc.version}</span>
+                    {doc.roles.length > 0 && (
+                      <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                        {doc.roles.slice(0, 2).join(", ")}{doc.roles.length > 2 ? ` +${doc.roles.length - 2}` : ""}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>
+                    Updated {new Date(doc.updated_at).toLocaleDateString()}
+                  </div>
                 </div>
-                <time className="process-updated" dateTime={doc.updated_at}>
-                  Updated {new Date(doc.updated_at).toLocaleDateString()}
-                </time>
               </Link>
             </li>
           ))}
         </ul>
       )}
-    </main>
+    </PageShell>
   );
 }

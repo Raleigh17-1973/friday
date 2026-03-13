@@ -49,6 +49,8 @@ function parseSegments(text: string): Segment[] {
   return segments.length > 0 ? segments : [{ kind: "text", content: text }];
 }
 
+type WorkspaceItem = { workspace_id: string; name: string; icon: string; color: string; slug: string };
+
 function LeftRail({
   threads,
   activeThreadId,
@@ -65,12 +67,20 @@ function LeftRail({
   onDelete: (threadId: string) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return threads;
     return threads.filter((thread) => thread.title.toLowerCase().includes(q));
   }, [threads, query]);
+
+  useEffect(() => {
+    fetch(`${BACKEND}/workspaces?org_id=default`)
+      .then((r) => r.ok ? r.json() : [])
+      .then((data: WorkspaceItem[]) => setWorkspaces(Array.isArray(data) ? data.slice(0, 6) : []))
+      .catch(() => {});
+  }, []);
 
   return (
     <aside className="left-rail" aria-label="Threads and saved context">
@@ -79,6 +89,7 @@ function LeftRail({
       <a href="/documents" className="processes-nav-link">📄 Documents</a>
       <a href="/analytics" className="processes-nav-link">📊 Analytics</a>
       <a href="/okrs" className="processes-nav-link">🎯 OKRs</a>
+      <a href="/workspaces" className="processes-nav-link">🗂️ Workspaces</a>
       <a href="/settings" className="processes-nav-link">⚙️ Settings</a>
       <button className="new-chat" onClick={onCreate}>
         + New chat
@@ -112,17 +123,54 @@ function LeftRail({
         </ul>
       </section>
       <section>
-        <h2>Pinned Workspaces</h2>
-        <ul>
-          <li>Operating Plan</li>
-          <li>Go-to-market</li>
-        </ul>
-      </section>
-      <section>
-        <h2>Saved Artifacts</h2>
-        <ul>
-          <li>Exec Memo v3</li>
-          <li>Risk Register</li>
+        <h2>Workspaces</h2>
+        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+          {workspaces.map((ws) => (
+            <li key={ws.workspace_id}>
+              <a
+                href={`/workspaces/${ws.workspace_id}`}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  padding: "0.375rem 0.5rem",
+                  borderRadius: "0.375rem",
+                  fontSize: "0.875rem",
+                  color: "var(--text-muted)",
+                  textDecoration: "none",
+                  transition: "background 0.15s",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              >
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: ws.color || "#6366f1",
+                    flexShrink: 0,
+                  }}
+                />
+                {ws.icon || "🗂️"} {ws.name}
+              </a>
+            </li>
+          ))}
+          <li>
+            <a
+              href="/workspaces"
+              style={{
+                display: "block",
+                padding: "0.375rem 0.5rem",
+                fontSize: "0.8125rem",
+                color: "var(--accent)",
+                textDecoration: "none",
+                opacity: 0.8,
+              }}
+            >
+              {workspaces.length > 0 ? "View all →" : "+ New Workspace"}
+            </a>
+          </li>
         </ul>
       </section>
     </aside>

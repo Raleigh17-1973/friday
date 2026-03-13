@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { PageShell } from "@/components/page-shell";
 
 const BACKEND = process.env.NEXT_PUBLIC_FRIDAY_BACKEND_URL ?? "http://127.0.0.1:8000";
 
@@ -104,77 +105,77 @@ export default function SettingsPage() {
   }, []);
 
   return (
-    <main className="settings-page">
-      <header className="settings-header">
-        <div>
-          <h1>Settings</h1>
-          <p className="settings-subtitle">Integrations &amp; Configuration</p>
-        </div>
-      </header>
-
+    <PageShell title="Settings" subtitle="Integrations & Configuration">
       {error && (
-        <div className="settings-error" role="alert">
-          {error}
+        <div className="error-state" role="alert" style={{ padding: "1rem", marginBottom: "1rem" }}>
+          ⚠️ {error}
         </div>
       )}
 
-      <section className="settings-section" aria-labelledby="integrations-heading">
-        <h2 id="integrations-heading" className="settings-section-title">
-          Connected Integrations
-        </h2>
-
-        {loading ? (
-          <p className="settings-loading">Loading integrations…</p>
-        ) : integrations.length === 0 ? (
-          <p className="settings-empty">No integrations configured.</p>
-        ) : (
-          <div className="settings-integrations-grid">
-            {integrations.map((integration) => (
-              <IntegrationCard key={integration.name} integration={integration} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="settings-section" aria-labelledby="credentials-heading">
-        <h2 id="credentials-heading" className="settings-section-title">
-          Active Credentials
-        </h2>
-
-        {loading ? (
-          <p className="settings-loading">Loading credentials…</p>
-        ) : credentials.length === 0 ? (
-          <p className="settings-empty">No credentials stored.</p>
-        ) : (
-          <div className="settings-credentials-table-wrap">
-            <table className="settings-credentials-table">
-              <thead>
-                <tr>
-                  <th scope="col">Provider</th>
-                  <th scope="col">Type</th>
-                  <th scope="col">Created</th>
-                </tr>
-              </thead>
-              <tbody>
-                {credentials.map((cred) => (
-                  <tr key={cred.credential_id}>
-                    <td>
-                      <span aria-hidden="true">{integrationIcon(cred.provider)}</span>{" "}
-                      {cred.provider}
-                    </td>
-                    <td className="settings-cred-type">{cred.credential_type}</td>
-                    <td className="settings-cred-date">
-                      <time dateTime={cred.created_at}>
-                        {new Date(cred.created_at).toLocaleDateString()}
-                      </time>
-                    </td>
-                  </tr>
+      <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+        <div className="card">
+          <div className="card-header">Connected Integrations</div>
+          <div className="card-body">
+            {loading ? (
+              <div className="loading-skeleton">
+                {[...Array(3)].map((_, i) => <div key={i} className="loading-skeleton-row" style={{ height: "4rem" }} />)}
+              </div>
+            ) : integrations.length === 0 ? (
+              <div className="empty-state" style={{ padding: "2rem" }}>
+                <div className="empty-state-icon">🔌</div>
+                <p className="empty-state-title">No integrations configured</p>
+                <p className="empty-state-body">Connect Google Workspace, Slack, Jira, and more.</p>
+              </div>
+            ) : (
+              <div className="settings-integrations-grid">
+                {integrations.map((integration) => (
+                  <IntegrationCard key={integration.name} integration={integration} />
                 ))}
-              </tbody>
-            </table>
+              </div>
+            )}
           </div>
-        )}
-      </section>
-    </main>
+        </div>
+
+        <div className="card">
+          <div className="card-header">Active Credentials</div>
+          <div className="card-body" style={{ padding: 0 }}>
+            {loading ? (
+              <div className="loading-skeleton" style={{ padding: "1rem" }}>
+                <div className="loading-skeleton-row" />
+              </div>
+            ) : credentials.length === 0 ? (
+              <div className="empty-state" style={{ padding: "2rem" }}>
+                <div className="empty-state-icon">🔑</div>
+                <p className="empty-state-title">No credentials stored</p>
+              </div>
+            ) : (
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Provider</th>
+                    <th>Type</th>
+                    <th>Created</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {credentials.map((cred) => (
+                    <tr key={cred.credential_id}>
+                      <td>
+                        <span aria-hidden="true">{integrationIcon(cred.provider)}</span>{" "}
+                        {cred.provider}
+                      </td>
+                      <td><span className="badge badge-neutral">{cred.credential_type}</span></td>
+                      <td style={{ color: "var(--text-muted)", fontSize: "0.8125rem" }}>
+                        {new Date(cred.created_at).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+    </PageShell>
   );
 }
