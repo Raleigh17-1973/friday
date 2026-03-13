@@ -68,7 +68,7 @@ class OrgContextService:
                     headcount INTEGER NOT NULL DEFAULT 0,
                     founded_year INTEGER,
                     mission TEXT NOT NULL DEFAULT '',
-                    values TEXT NOT NULL DEFAULT '[]',
+                    company_values TEXT NOT NULL DEFAULT '[]',
                     metadata TEXT NOT NULL DEFAULT '{}'
                 );
                 CREATE TABLE IF NOT EXISTS people (
@@ -118,7 +118,7 @@ class OrgContextService:
             industry=row["industry"], stage=row["stage"],
             fiscal_year_end=row["fiscal_year_end"], headcount=row["headcount"],
             founded_year=row["founded_year"], mission=row["mission"],
-            values=json.loads(row["values"] or "[]"),
+            values=json.loads(row["company_values"] or "[]"),
             metadata=json.loads(row["metadata"] or "{}"),
         )
 

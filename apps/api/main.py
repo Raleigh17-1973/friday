@@ -927,6 +927,310 @@ def list_events(limit: int = 50) -> list[dict]:
     return [asdict(e) for e in service.events.recent_events(limit=limit)]
 
 
+# ── Code Interpreter endpoints ───────────────────────────────────────────────
+
+class CodeRunPayload(BaseModel):
+    code: str
+    data_files: dict[str, str] = {}
+    org_id: str = "org-1"
+
+
+@app.post("/analysis/run")
+def run_code(payload: CodeRunPayload) -> dict:
+    return service.interpreter.run(payload.code, data_files=payload.data_files, org_id=payload.org_id)
+
+
+# ── Meeting endpoints ─────────────────────────────────────────────────────────
+
+class MeetingCreatePayload(BaseModel):
+    title: str
+    scheduled_at: str
+    attendees: list[str] = []
+    agenda: list[str] = []
+    duration_minutes: int = 60
+    org_id: str = "org-1"
+
+
+class MeetingNotesPayload(BaseModel):
+    raw_text: str
+    org_id: str = "org-1"
+
+
+@app.get("/meetings")
+def list_meetings(org_id: str = "org-1", status: Optional[str] = None) -> list[dict]:
+    from dataclasses import asdict
+    return [asdict(m) for m in service.meetings.list_meetings(org_id=org_id, status=status)]
+
+
+@app.post("/meetings", status_code=201)
+def create_meeting(payload: MeetingCreatePayload) -> dict:
+    from dataclasses import asdict
+    m = service.meetings.create_meeting(
+        title=payload.title, scheduled_at=payload.scheduled_at,
+        attendees=payload.attendees, agenda=payload.agenda,
+        duration_minutes=payload.duration_minutes, org_id=payload.org_id)
+    return asdict(m)
+
+
+@app.post("/meetings/{meeting_id}/notes", status_code=201)
+def process_meeting_notes(meeting_id: str, payload: MeetingNotesPayload) -> dict:
+    from dataclasses import asdict
+    note = service.meetings.process_notes(meeting_id, payload.raw_text, org_id=payload.org_id)
+    result = asdict(note)
+    result["action_items"] = [asdict(a) for a in note.action_items]
+    return result
+
+
+@app.get("/meetings/action-items")
+def list_action_items(org_id: str = "org-1", status: str = "open", owner: Optional[str] = None) -> list[dict]:
+    from dataclasses import asdict
+    return [asdict(a) for a in service.meetings.list_action_items(org_id=org_id, status=status, owner=owner)]
+
+
+@app.post("/meetings/action-items/{item_id}/complete")
+def complete_action_item(item_id: str) -> dict:
+    service.meetings.complete_action_item(item_id)
+    return {"status": "done"}
+
+
+# ── Org context endpoints ─────────────────────────────────────────────────────
+
+class OrgProfilePayload(BaseModel):
+    company_name: str
+    industry: str = ""
+    stage: str = "growth"
+    fiscal_year_end: str = "12-31"
+    headcount: int = 0
+    founded_year: Optional[int] = None
+    mission: str = ""
+    values: list[str] = []
+    org_id: str = "org-1"
+
+
+class PersonPayload(BaseModel):
+    name: str
+    role: str
+    department: str
+    email: str = ""
+    reports_to: str = ""
+    org_id: str = "org-1"
+
+
+class PriorityPayload(BaseModel):
+    title: str
+    description: str
+    owner: str
+    due_date: str
+    tags: list[str] = []
+    org_id: str = "org-1"
+
+
+@app.get("/org/profile")
+def get_org_profile(org_id: str = "org-1") -> dict:
+    from dataclasses import asdict
+    p = service.org_context.get_profile(org_id)
+    return asdict(p) if p else {}
+
+
+@app.put("/org/profile")
+def upsert_org_profile(payload: OrgProfilePayload) -> dict:
+    from dataclasses import asdict
+    from packages.org_context import OrgProfile
+    profile = OrgProfile(
+        org_id=payload.org_id, company_name=payload.company_name,
+        industry=payload.industry, stage=payload.stage,
+        fiscal_year_end=payload.fiscal_year_end, headcount=payload.headcount,
+        founded_year=payload.founded_year, mission=payload.mission,
+        values=payload.values)
+    return asdict(service.org_context.upsert_profile(profile))
+
+
+@app.get("/org/people")
+def list_people(org_id: str = "org-1", department: Optional[str] = None) -> list[dict]:
+    from dataclasses import asdict
+    return [asdict(p) for p in service.org_context.list_people(org_id, department)]
+
+
+@app.post("/org/people", status_code=201)
+def add_person(payload: PersonPayload) -> dict:
+    from dataclasses import asdict
+    from packages.org_context import Person
+    from uuid import uuid4
+    p = Person(person_id=f"person_{uuid4().hex[:12]}", name=payload.name,
+                role=payload.role, department=payload.department,
+                email=payload.email, reports_to=payload.reports_to, org_id=payload.org_id)
+    return asdict(service.org_context.upsert_person(p))
+
+
+@app.get("/org/chart")
+def org_chart(org_id: str = "org-1") -> dict:
+    return service.org_context.org_chart(org_id)
+
+
+@app.get("/org/priorities")
+def list_priorities(org_id: str = "org-1") -> list[dict]:
+    from dataclasses import asdict
+    return [asdict(p) for p in service.org_context.list_priorities(org_id)]
+
+
+@app.post("/org/priorities", status_code=201)
+def add_priority(payload: PriorityPayload) -> dict:
+    from dataclasses import asdict
+    return asdict(service.org_context.add_priority(
+        title=payload.title, description=payload.description,
+        owner=payload.owner, due_date=payload.due_date,
+        org_id=payload.org_id, tags=payload.tags))
+
+
+# ── Decision log endpoints ────────────────────────────────────────────────────
+
+class DecisionPayload(BaseModel):
+    title: str
+    context: str
+    rationale: str
+    owner: str
+    options_considered: list[str] = []
+    tags: list[str] = []
+    reversibility: str = "reversible"
+    confidence: float = 0.8
+    related_run_id: str = ""
+    org_id: str = "org-1"
+
+
+@app.get("/decisions")
+def list_decisions(org_id: str = "org-1", tag: Optional[str] = None) -> list[dict]:
+    from dataclasses import asdict
+    return [asdict(d) for d in service.decisions.list_decisions(org_id, tag=tag)]
+
+
+@app.post("/decisions", status_code=201)
+def log_decision(payload: DecisionPayload) -> dict:
+    from dataclasses import asdict
+    return asdict(service.decisions.log(
+        title=payload.title, context=payload.context, rationale=payload.rationale,
+        owner=payload.owner, options_considered=payload.options_considered,
+        org_id=payload.org_id, tags=payload.tags, reversibility=payload.reversibility,
+        confidence=payload.confidence, related_run_id=payload.related_run_id))
+
+
+@app.get("/decisions/search")
+def search_decisions(q: str, org_id: str = "org-1") -> list[dict]:
+    from dataclasses import asdict
+    return [asdict(d) for d in service.decisions.search(q, org_id)]
+
+
+@app.post("/decisions/{decision_id}/outcome")
+def record_decision_outcome(decision_id: str, outcome: str) -> dict:
+    service.decisions.record_outcome(decision_id, outcome)
+    return {"status": "recorded"}
+
+
+# ── Alerts / Proactive intelligence endpoints ─────────────────────────────────
+
+@app.get("/alerts")
+def list_alerts(org_id: str = "org-1", severity: Optional[str] = None) -> list[dict]:
+    from dataclasses import asdict
+    return [asdict(a) for a in service.scanner.list_alerts(org_id=org_id, severity=severity)]
+
+
+@app.post("/alerts/{alert_id}/acknowledge")
+def acknowledge_alert(alert_id: str) -> dict:
+    service.scanner.acknowledge(alert_id)
+    return {"status": "acknowledged"}
+
+
+@app.post("/alerts/scan")
+def run_proactive_scan(org_id: str = "org-1") -> dict:
+    from dataclasses import asdict
+    kpis = [asdict(k) for k in service.kpis.list_kpis(org_id=org_id)]
+    objectives = [asdict(o) for o in service.okrs.list_objectives(org_id=org_id)]
+    budget_status = service.budgets.budget_status(org_id=org_id)
+
+    kpi_alerts = service.scanner.scan_kpis(kpis)
+    okr_alerts = service.scanner.scan_okrs(objectives)
+    budget_alerts = service.scanner.scan_budget(budget_status)
+    all_alerts = kpi_alerts + okr_alerts + budget_alerts
+
+    return {
+        "scanned": {"kpis": len(kpis), "objectives": len(objectives), "budget_categories": len(budget_status)},
+        "alerts_generated": len(all_alerts),
+        "alerts": [asdict(a) for a in all_alerts],
+    }
+
+
+# ── Financial modeling endpoints ──────────────────────────────────────────────
+
+class ScenarioPayload(BaseModel):
+    base_revenue: float
+    base_costs: float
+    optimistic_growth_pct: float = 0.30
+    pessimistic_growth_pct: float = -0.15
+
+
+class RunwayPayload(BaseModel):
+    cash_on_hand: float
+    monthly_burn: float
+    current_mrr: float = 0
+    mrr_growth_rate: float = 0.08
+
+
+class UnitEconomicsPayload(BaseModel):
+    arpu: float
+    cac: float
+    churn_rate: float
+    gross_margin: float = 0.70
+
+
+@app.post("/modeling/scenarios")
+def run_scenarios(payload: ScenarioPayload) -> dict:
+    from dataclasses import asdict
+    scenarios = service.modeling.three_case_model(
+        payload.base_revenue, payload.base_costs,
+        payload.optimistic_growth_pct, payload.pessimistic_growth_pct)
+    ev = service.modeling.expected_value(scenarios)
+    return {"scenarios": [asdict(s) for s in scenarios], "expected_value": ev}
+
+
+@app.post("/modeling/runway")
+def calc_runway(payload: RunwayPayload) -> dict:
+    from dataclasses import asdict
+    return asdict(service.modeling.runway(
+        payload.cash_on_hand, payload.monthly_burn,
+        payload.current_mrr, payload.mrr_growth_rate))
+
+
+@app.post("/modeling/unit-economics")
+def unit_economics(payload: UnitEconomicsPayload) -> dict:
+    return service.modeling.unit_economics(
+        payload.arpu, payload.cac, payload.churn_rate, payload.gross_margin)
+
+
+# ── Voice transcription endpoint ──────────────────────────────────────────────
+
+@app.post("/voice/transcribe")
+async def transcribe_voice(file: UploadFile = File(...)) -> dict:
+    from dataclasses import asdict
+    audio_bytes = await file.read()
+    result = service.voice.transcribe_bytes(audio_bytes, filename=file.filename or "audio.mp3")
+    return asdict(result)
+
+
+# ── Weekly digest endpoint ────────────────────────────────────────────────────
+
+@app.get("/digest/weekly")
+def weekly_digest(org_id: str = "org-1") -> dict:
+    from dataclasses import asdict
+    kpis = [asdict(k) for k in service.kpis.list_kpis(org_id=org_id)]
+    objectives = [asdict(o) for o in service.okrs.list_objectives(org_id=org_id)]
+    alerts = [asdict(a) for a in service.scanner.list_alerts(org_id=org_id)]
+    decisions = [asdict(d) for d in service.decisions.list_decisions(org_id=org_id, limit=10)]
+
+    digest = service.digest.generate_weekly(kpis, objectives, alerts, decisions, org_id=org_id)
+    result = asdict(digest)
+    result["markdown"] = service.digest.digest_to_markdown(digest)
+    return result
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.post("/admin/runtime/reload")

@@ -17,9 +17,15 @@ from packages.credentials import CredentialService
 from packages.templates import TemplateService
 from packages.analytics import KPIService, ChartService
 from packages.okrs import OKRService
-from packages.finance import InvoiceService, BudgetService
+from packages.finance import InvoiceService, BudgetService, FinancialModelingService
 from packages.brand import BrandAssetService
 from packages.events import EventBus
+from packages.proactive import ProactiveScanner, MeetingBriefService, DigestService
+from packages.org_context import OrgContextService
+from packages.decisions import DecisionLogService
+from packages.meetings import MeetingService
+from packages.voice import VoiceTranscriptionService
+from packages.interpreter import CodeInterpreterService
 from packages.tools.mcp import MCPRegistry
 from packages.tools.policy_wrapped_tools import ToolExecutor
 from packages.tools.registry import ToolRegistry
@@ -116,9 +122,36 @@ class FridayService:
         finance_db = self.root / "data" / "friday_finance.sqlite3"
         self.invoices = InvoiceService(db_path=finance_db)
         self.budgets = BudgetService(db_path=finance_db)
+        self.modeling = FinancialModelingService()
 
         # Phase 8: Events
         self.events = EventBus()
+
+        # Priority 1: Code interpreter
+        self.interpreter = CodeInterpreterService(storage=self.storage)
+
+        # Priority 2: Web research upgrade handled in ToolExecutor env vars
+
+        # Priority 3: Proactive intelligence
+        proactive_db = self.root / "data" / "friday_proactive.sqlite3"
+        self.scanner = ProactiveScanner(db_path=proactive_db)
+        self.briefs = MeetingBriefService()
+        self.digest = DigestService()
+
+        # Priority 4: Organizational memory
+        org_context_db = self.root / "data" / "friday_org_context.sqlite3"
+        self.org_context = OrgContextService(db_path=org_context_db)
+
+        # Priority 5: Meeting intelligence
+        meetings_db = self.root / "data" / "friday_meetings.sqlite3"
+        self.meetings = MeetingService(db_path=meetings_db)
+
+        # Priority 7: Decision log
+        decisions_db = self.root / "data" / "friday_decisions.sqlite3"
+        self.decisions = DecisionLogService(db_path=decisions_db)
+
+        # Priority 8: Voice transcription
+        self.voice = VoiceTranscriptionService()
 
     def execute_chat_payload(self, payload: dict, upload_store: dict | None = None) -> dict:
         from packages.common.models import ChatRequest

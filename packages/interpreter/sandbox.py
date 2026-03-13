@@ -119,12 +119,12 @@ for _fname, _fpath in _data_files.items():
 # expose file vars to user namespace
 globals().update(_file_vars)
 
-# ---- execute user code ----
+# ---- execute user code (base64-encoded to avoid quoting issues) ----
 _user_locals = dict(globals())
 try:
-    exec(compile("""
-USER_CODE_PLACEHOLDER
-""", "<friday_sandbox>", "exec"), _user_locals)
+    import base64 as _b64code
+    _code_src = _b64code.b64decode("USER_CODE_B64_PLACEHOLDER").decode("utf-8")
+    exec(compile(_code_src, "<friday_sandbox>", "exec"), _user_locals)
 except SystemExit:
     pass
 except Exception as _exc:
@@ -249,13 +249,14 @@ class CodeSandbox:
 
     def _build_harness(self, user_code: str, data_files: dict[str, str]) -> str:
         import json
-        # Use simple string replacement to avoid .format() conflicts with
-        # curly braces in the Python template code itself.
-        # Do NOT indent user_code — it's compiled as a standalone module.
+        import base64
+        # Base64-encode user code to completely avoid quoting/escaping issues
+        # (f-strings with \n, triple-quotes, etc. would otherwise break the exec)
+        code_b64 = base64.b64encode(user_code.encode("utf-8")).decode("ascii")
         harness = _HARNESS_TEMPLATE.replace(
             "DATA_FILES_PLACEHOLDER", json.dumps(data_files)
         ).replace(
-            "USER_CODE_PLACEHOLDER", user_code
+            "USER_CODE_B64_PLACEHOLDER", code_b64
         )
         return harness
 
