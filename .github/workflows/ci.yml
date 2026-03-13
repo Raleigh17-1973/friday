@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Python tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[phase4]"
+
+      - name: Run tests
+        run: python -m pytest tests/ -q --tb=short
+        env:
+          # No real LLM keys — tests run against stubs
+          ANTHROPIC_API_KEY: ""
+          OPENAI_API_KEY: ""
+
+  lint:
+    name: Type check (pyright)
+    runs-on: ubuntu-latest
+    continue-on-error: true   # advisory only — don't block merge
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies + pyright
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[phase4]"
+          pip install pyright
+
+      - name: Run pyright
+        run: pyright packages/ workers/ apps/api/ --ignore node_modules
+
+  docker-build:
+    name: Docker build check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t friday-api:ci .

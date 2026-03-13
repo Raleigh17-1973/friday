@@ -1,4 +1,50 @@
+# Friday full local stack
+# Usage:
+#   docker compose -f infra/docker/docker-compose.yml up
+# Or just the infra deps (Postgres, Redis):
+#   docker compose -f infra/docker/docker-compose.yml up postgres redis
+#
+# The api + web services build from the project root — run from repo root:
+#   docker compose -f infra/docker/docker-compose.yml --project-directory ../.. up
+
 services:
+  api:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: friday-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../../.env
+    environment:
+      FRIDAY_MEMORY_DATABASE_URL: postgresql://friday:friday@postgres:5432/friday
+      FRIDAY_AUDIT_DATABASE_URL: postgresql://friday:friday@postgres:5432/friday
+      FRIDAY_ALLOWED_ORIGINS: http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../../apps/web
+      dockerfile: Dockerfile.web
+    container_name: friday-web
+    ports:
+      - "3000:3000"
+    environment:
+      FRIDAY_BACKEND_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
   postgres:
     image: pgvector/pgvector:pg16
     container_name: friday-postgres

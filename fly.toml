@@ -1,0 +1,55 @@
+# fly.toml — Friday API on Fly.io
+# Deploy: flyctl deploy
+# Secrets: flyctl secrets set OPENAI_API_KEY=... ANTHROPIC_API_KEY=... FRIDAY_MEMORY_DATABASE_URL=...
+
+app = "friday-api"
+primary_region = "iad"   # US East — change to your nearest region
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT                    = "8000"
+  FRIDAY_WORKFLOW_ENGINE  = "inprocess"
+  # FRIDAY_ALLOWED_ORIGINS — set via: flyctl secrets set FRIDAY_ALLOWED_ORIGINS=https://your-vercel-domain.vercel.app
+  # FRIDAY_MEMORY_DATABASE_URL  — set via secrets (Supabase or Fly Postgres connection string)
+  # FRIDAY_AUDIT_DATABASE_URL   — set via secrets
+  # OPENAI_API_KEY              — set via secrets
+  # ANTHROPIC_API_KEY           — set via secrets
+  # ADMIN_API_KEY               — set via secrets
+
+[http_service]
+  internal_port        = 8000
+  force_https          = true
+  auto_stop_machines   = true    # scale to zero when idle (saves cost on free tier)
+  auto_start_machines  = true
+  min_machines_running = 0       # set to 1 for zero cold-start latency
+
+  [http_service.concurrency]
+    type       = "requests"
+    hard_limit = 200
+    soft_limit = 150
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+[checks]
+  [checks.health]
+    grace_period = "10s"
+    interval     = "30s"
+    method       = "GET"
+    path         = "/health"
+    port         = 8000
+    protocol     = "http"
+    timeout      = "5s"
+
+  [checks.ready]
+    grace_period = "15s"
+    interval     = "60s"
+    method       = "GET"
+    path         = "/ready"
+    port         = 8000
+    protocol     = "http"
+    timeout      = "10s"

@@ -113,6 +113,43 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/ready")
+def ready() -> dict:
+    """Readiness probe — checks that all critical dependencies are reachable.
+
+    Used by Fly.io health checks and Kubernetes readiness probes.
+    Returns 200 when the service can accept traffic, 503 when not ready.
+    """
+    checks: dict[str, str] = {}
+    ok = True
+
+    # Memory / DB connectivity
+    try:
+        # Lightweight check: just verify the memory service is initialised
+        _ = service.memory  # would raise if initialisation failed
+        checks["memory"] = "ok"
+    except Exception as exc:
+        checks["memory"] = f"error: {exc}"
+        ok = False
+
+    # Agent registry
+    try:
+        agents = service.registry.list_active()
+        checks["registry"] = f"ok ({len(agents)} agents)"
+    except Exception as exc:
+        checks["registry"] = f"error: {exc}"
+        ok = False
+
+    # LLM provider (advisory — does not block readiness)
+    checks["llm"] = "connected" if service.llm is not None else "offline (stub mode)"
+
+    status_code = 200 if ok else 503
+    return JSONResponse(
+        content={"status": "ready" if ok else "degraded", "checks": checks},
+        status_code=status_code,
+    )
+
+
 @app.post("/chat")
 def chat(payload: ChatPayload) -> dict:
     try:

@@ -1,0 +1,44 @@
+name: Deploy API → Fly.io
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # Only deploy when backend files change
+      - "apps/api/**"
+      - "packages/**"
+      - "workers/**"
+      - "Dockerfile"
+      - "fly.toml"
+      - "pyproject.toml"
+  workflow_dispatch:    # allow manual trigger from GitHub UI
+
+jobs:
+  deploy:
+    name: Deploy to Fly.io
+    runs-on: ubuntu-latest
+    environment: production   # requires "production" environment approval in GitHub settings
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tests before deploy
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: |
+          pip install --upgrade pip
+          pip install -e ".[phase4]"
+          python -m pytest tests/ -q --tb=short
+        env:
+          ANTHROPIC_API_KEY: ""
+          OPENAI_API_KEY: ""
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy to Fly.io
+        run: flyctl deploy --remote-only --wait-timeout 120
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
