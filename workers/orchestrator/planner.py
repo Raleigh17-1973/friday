@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 _PLANNER_SYSTEM = """\
 You are Friday's planning engine. Analyze the user's business request and produce a routing plan.
 
-Available specialist IDs: chief_of_staff_strategist, project_manager, finance, operations, sales_revenue, writer_scribe, research, critic_red_team
+Available specialist IDs: chief_of_staff_strategist, project_manager, finance, operations, sales_revenue, writer_scribe, research, critic_red_team, process_mapper
 
 Respond ONLY with valid JSON (no markdown fences):
 {
@@ -87,10 +87,37 @@ def build_plan(message: str, llm: "LLMProvider | None" = None) -> PlannerOutput:
             domains.append("finance")
         if "finance" not in specialists:
             specialists.append("finance")
+    # Process mapping detection — must come before the general "process" operations check
+    _PROCESS_MAP_KEYWORDS = [
+        "map a process", "map the process", "map our process",
+        "document a process", "document the process", "document our process",
+        "process flow", "process mapping", "process documentation",
+        "flowchart", "flow chart",
+        "swim lane", "swimlane", "swim-lane",
+        "workflow diagram",
+        "standard operating procedure", "sop",
+        "walk me through", "walk us through",
+        "capture our process", "capture the process",
+        "business process",
+    ]
+    _process_map_hits = sum(1 for kw in _PROCESS_MAP_KEYWORDS if kw in text)
+    # Also count single-word signals
+    _PROCESS_MAP_SINGLES = ["diagram", "flowchart", "swimlane", "sop", "procedure"]
+    _process_map_hits += sum(1 for kw in _PROCESS_MAP_SINGLES if kw in text.split())
+    is_process_mapping = _process_map_hits >= 1
+
+    if is_process_mapping:
+        domains.append("operations")
+        if "process_mapper" not in specialists:
+            specialists.append("process_mapper")
+        # process mapping is self-contained — remove noisy catch-all
+        if "chief_of_staff_strategist" in specialists and len(specialists) > 1:
+            specialists.remove("chief_of_staff_strategist")
+
     if any(token in text for token in [
         "process", "throughput", "bottleneck", "execution", "workflow", "manual",
         "automation", "hours per", "rework", "reporting", "ops",
-    ]):
+    ]) and not is_process_mapping:
         if "operations" not in domains:
             domains.append("operations")
         if "operations" not in specialists:
@@ -185,7 +212,9 @@ def build_plan(message: str, llm: "LLMProvider | None" = None) -> PlannerOutput:
         if "risk" not in text and not has_constraints:
             missing_info.append("What failure risks are you most concerned about?")
 
-    if is_business_case:
+    if is_process_mapping:
+        output_format = "full_deliverable"
+    elif is_business_case:
         output_format = "business_case_draft"
     elif is_creation_request:
         output_format = "full_deliverable"

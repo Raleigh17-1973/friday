@@ -1,11 +1,47 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 const BACKEND = process.env.NEXT_PUBLIC_FRIDAY_BACKEND_URL ?? "http://127.0.0.1:8000";
 
 import { useChatState } from "@/components/use-chat-state";
 import type { ChatMode, ConversationThread, FridayMessage } from "@/lib/types";
+
+// Mermaid is browser-only (DOM required) — load dynamically, no SSR
+const MermaidDiagram = dynamic(
+  () => import("@/components/mermaid-diagram").then((m) => m.MermaidDiagram),
+  { ssr: false, loading: () => <div className="mermaid-loading">Rendering diagram…</div> }
+);
+
+// ── Mermaid fence parser ───────────────────────────────────────────────────
+// Splits a message string into alternating text / mermaid segments.
+type TextSegment   = { kind: "text"; content: string };
+type DiagramSegment = { kind: "diagram"; code: string };
+type Segment = TextSegment | DiagramSegment;
+
+const MERMAID_FENCE_RE = /```mermaid\n([\s\S]*?)```/g;
+
+function parseSegments(text: string): Segment[] {
+  const segments: Segment[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  MERMAID_FENCE_RE.lastIndex = 0;
+
+  while ((match = MERMAID_FENCE_RE.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({ kind: "text", content: text.slice(lastIndex, match.index) });
+    }
+    segments.push({ kind: "diagram", code: match[1] });
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    segments.push({ kind: "text", content: text.slice(lastIndex) });
+  }
+
+  return segments.length > 0 ? segments : [{ kind: "text", content: text }];
+}
 
 function LeftRail({
   threads,
@@ -83,17 +119,66 @@ function LeftRail({
 }
 
 function MessageRow({ message }: { message: FridayMessage }) {
+  const isFriday = message.role === "friday";
+  const segments = isFriday ? parseSegments(message.text) : null;
+
   return (
     <article className={`msg msg-${message.role}`}>
-      <p>{message.text}</p>
+      {isFriday && segments ? (
+        segments.map((seg, i) =>
+          seg.kind === "diagram" ? (
+            <MermaidDiagram key={i} code={seg.code} />
+          ) : (
+            seg.content.trim() ? <p key={i}>{seg.content}</p> : null
+          )
+        )
+      ) : (
+        <p>{message.text}</p>
+      )}
       <time dateTime={message.timestamp}>{new Date(message.timestamp).toLocaleTimeString()}</time>
     </article>
   );
 }
 
-function Transcript({ messages, progress }: { messages: FridayMessage[]; progress: string }) {
+const THINKING_STAGES: Record<string, string> = {
+  Researching:  "Pulling in context and memory…",
+  Working:      "Consulting specialists…",
+  Synthesizing: "Drafting the response…",
+  Completed:    "",
+  Stopped:      "",
+  Ready:        "",
+  Error:        "",
+};
+
+function ThinkingBubble({ label }: { label: string }) {
+  const stage = THINKING_STAGES[label] ?? label;
+  return (
+    <article className="msg msg-friday msg-thinking" aria-busy="true" aria-label="Friday is thinking">
+      <div className="thinking-header">
+        <span className="thinking-label">Friday is meeting with the team on this</span>
+        <span className="thinking-dots" aria-hidden="true">
+          <span /><span /><span />
+        </span>
+      </div>
+      {stage ? <p className="thinking-stage">{stage}</p> : null}
+    </article>
+  );
+}
+
+function Transcript({
+  messages,
+  progress,
+  isStreaming
+}: {
+  messages: FridayMessage[];
+  progress: string;
+  isStreaming: boolean;
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [showJump, setShowJump] = useState(false);
+
+  const lastMsg = messages[messages.length - 1];
+  const showThinking = isStreaming && lastMsg?.role === "friday" && lastMsg?.text === "";
 
   const onScroll = () => {
     const el = containerRef.current;
@@ -115,9 +200,12 @@ function Transcript({ messages, progress }: { messages: FridayMessage[]; progres
         {progress}
       </div>
       <div className="transcript" role="log" aria-live="polite" aria-relevant="additions text" onScroll={onScroll} ref={containerRef}>
-        {messages.map((message) => (
-          <MessageRow key={message.id} message={message} />
-        ))}
+        {messages.map((message) => {
+          if (showThinking && message.id === lastMsg.id) {
+            return <ThinkingBubble key={message.id} label={progress} />;
+          }
+          return <MessageRow key={message.id} message={message} />;
+        })}
       </div>
       {showJump && (
         <button className="jump-latest" onClick={jumpToLatest}>
@@ -372,7 +460,7 @@ export function Workspace() {
             )}
           </div>
         </header>
-        <Transcript messages={messages} progress={progress} />
+        <Transcript messages={messages} progress={progress} isStreaming={isStreaming} />
         <Composer
           onSend={send}
           onStop={stop}

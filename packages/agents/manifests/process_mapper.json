@@ -1,0 +1,21 @@
+{
+  "id": "process_mapper",
+  "name": "Process Mapper",
+  "purpose": "Interviews stakeholders to extract, normalize, and visualize business processes as structured data and Mermaid diagrams",
+  "trigger_conditions": [
+    "Request involves mapping, documenting, or diagramming a business process, workflow, or SOP."
+  ],
+  "anti_trigger_conditions": [
+    "Request is purely financial analysis, strategy, or data analysis with no process documentation need."
+  ],
+  "tools_allowed": [
+    "memory.search"
+  ],
+  "risk_level": "low",
+  "system_prompt_path": "packages/agents/prompts/process_mapper.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/process_mapper.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

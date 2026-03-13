@@ -10,6 +10,71 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# ── Process Mapping models ────────────────────────────────────────────────────
+
+@dataclass
+class ProcessStep:
+    id: str
+    name: str
+    owner: str
+    inputs: list[str] = field(default_factory=list)
+    outputs: list[str] = field(default_factory=list)
+    tools: list[str] = field(default_factory=list)
+    sla: str = ""
+
+
+@dataclass
+class ProcessDocument:
+    """Normalized business process extracted from a multi-turn interview."""
+
+    id: str
+    org_id: str
+    process_name: str
+    trigger: str
+    steps: list[ProcessStep]
+    decision_points: list[dict[str, Any]]
+    roles: list[str]
+    tools: list[str]
+    exceptions: list[dict[str, Any]]
+    kpis: list[dict[str, Any]]
+    mermaid_flowchart: str
+    mermaid_swimlane: str
+    completeness_score: float
+    version: str = "1.0.0"
+    status: str = "draft"          # draft | active | deprecated
+    created_at: str = field(default_factory=utc_now_iso)
+    updated_at: str = field(default_factory=utc_now_iso)
+    changelog: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        d = asdict(self)
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ProcessDocument":
+        steps = [ProcessStep(**s) if isinstance(s, dict) else s for s in data.get("steps", [])]
+        return cls(
+            id=str(data["id"]),
+            org_id=str(data.get("org_id", "org-1")),
+            process_name=str(data["process_name"]),
+            trigger=str(data.get("trigger", "")),
+            steps=steps,
+            decision_points=list(data.get("decision_points", [])),
+            roles=list(data.get("roles", [])),
+            tools=list(data.get("tools", [])),
+            exceptions=list(data.get("exceptions", [])),
+            kpis=list(data.get("kpis", [])),
+            mermaid_flowchart=str(data.get("mermaid_flowchart", "")),
+            mermaid_swimlane=str(data.get("mermaid_swimlane", "")),
+            completeness_score=float(data.get("completeness_score", 0.0)),
+            version=str(data.get("version", "1.0.0")),
+            status=str(data.get("status", "draft")),
+            created_at=str(data.get("created_at", utc_now_iso())),
+            updated_at=str(data.get("updated_at", utc_now_iso())),
+            changelog=list(data.get("changelog", [])),
+        )
+
+
 class RiskLevel(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
