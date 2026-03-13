@@ -37,6 +37,20 @@ class PolicyEngine:
 
         return PolicyDecision(allowed=False, requires_approval=False, reason="unsupported action mode")
 
+    def evaluate_process_version_bump(self, *, bump: str) -> PolicyDecision:
+        """Evaluate whether a process version bump requires approval.
+
+        - patch / minor bumps → allowed immediately, no approval needed
+        - major bumps → allowed but requires approval (breaking change to a process record)
+        """
+        if bump == "major":
+            return PolicyDecision(
+                allowed=True,
+                requires_approval=True,
+                reason="major process version bump requires approval",
+            )
+        return PolicyDecision(allowed=True, requires_approval=False, reason=f"{bump} bump allowed immediately")
+
     def evaluate_tool_access(
         self,
         *,

@@ -69,6 +69,7 @@ function LeftRail({
   return (
     <aside className="left-rail" aria-label="Threads and saved context">
       <header className="rail-header">Friday</header>
+      <a href="/processes" className="processes-nav-link">📋 Process Library</a>
       <button className="new-chat" onClick={onCreate}>
         + New chat
       </button>

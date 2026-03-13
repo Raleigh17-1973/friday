@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 from typing import Iterator
 
-from packages.llm.base import LLMProvider
+from packages.llm.base import LLMProvider, _parse_llm_json
 
 
 class OpenAIProvider(LLMProvider):
@@ -39,3 +40,29 @@ class OpenAIProvider(LLMProvider):
             delta = chunk.choices[0].delta.content
             if delta:
                 yield delta
+
+    def complete_structured(self, system: str, prompt: str, schema: dict, **kwargs) -> dict:
+        """Use OpenAI's native JSON schema response_format (strict=True) for guaranteed structure."""
+        model = kwargs.get("model", os.getenv("FRIDAY_PROCESS_MODEL", self._model))
+        try:
+            response = self._client.chat.completions.create(
+                model=model,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "StructuredOutput",
+                        "strict": True,
+                        "schema": schema,
+                    },
+                },
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            content = response.choices[0].message.content or ""
+            return json.loads(content)
+        except Exception:
+            # Graceful fallback to prompt-based JSON if structured outputs fail
+            # (e.g. model doesn't support response_format, or schema has unsupported types)
+            return self.complete_json(system, prompt, **kwargs)

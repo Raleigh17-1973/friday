@@ -9,6 +9,9 @@ from packages.governance.audit import AuditLog
 from packages.governance.policy import PolicyEngine
 from packages.governance.run_store import PostgresRunStore, SQLiteRunStore
 from packages.memory.service import LayeredMemoryService
+from packages.process.service import ProcessService
+from packages.process.analytics import ProcessAnalytics
+from packages.process.repository import SQLiteProcessRepository
 from packages.tools.mcp import MCPRegistry
 from packages.tools.policy_wrapped_tools import ToolExecutor
 from packages.tools.registry import ToolRegistry
@@ -41,6 +44,10 @@ class FridayService:
         self.tools = ToolRegistry(self.mcp)
         approvals_db = self.root / "data" / "friday_approvals.sqlite3"
         self.approvals = ApprovalService(db_path=approvals_db)
+        process_db = self.root / "data" / "friday_processes.sqlite3"
+        _process_repo = SQLiteProcessRepository(db_path=process_db)
+        self.processes = ProcessService(db_path=process_db, approval_service=self.approvals)
+        self.process_analytics = ProcessAnalytics(repo=_process_repo)
         run_store = PostgresRunStore(audit_dsn) if audit_dsn else SQLiteRunStore(audit_db)
         self.audit = AuditLog(run_store=run_store)
         self.llm = create_llm_provider()

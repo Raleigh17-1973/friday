@@ -26,6 +26,14 @@ class LLMProvider(ABC):
         text = self.complete(system, prompt, **kwargs)
         return _parse_llm_json(text)
 
+    def complete_structured(self, system: str, prompt: str, schema: dict, **kwargs) -> dict:
+        """
+        Send a prompt with a JSON schema response_format for guaranteed structure.
+        Default: falls back to complete_json() (prompt-based). Providers that support
+        native structured outputs (e.g. OpenAI) should override for schema enforcement.
+        """
+        return self.complete_json(system, prompt, **kwargs)
+
 
 def _parse_llm_json(text: str) -> dict:
     """Strip markdown fences and parse JSON from LLM output."""

@@ -93,6 +93,39 @@ class EvalPayload(BaseModel):
     suite: str = "core-routing"
 
 
+class ProcessCreatePayload(BaseModel):
+    org_id: str = "org-1"
+    process_name: str
+    trigger: str = ""
+    steps: list[dict] = []
+    decision_points: list[dict] = []
+    roles: list[str] = []
+    tools: list[str] = []
+    exceptions: list[dict] = []
+    kpis: list[dict] = []
+    mermaid_flowchart: str = ""
+    mermaid_swimlane: str = ""
+    status: str = "draft"
+
+
+class ProcessUpdatePayload(BaseModel):
+    bump: str = "patch"           # major | minor | patch
+    author: str = "user"
+    changelog_entry: str = ""
+    # fields to update (any subset)
+    process_name: str | None = None
+    trigger: str | None = None
+    steps: list[dict] | None = None
+    decision_points: list[dict] | None = None
+    roles: list[str] | None = None
+    tools: list[str] | None = None
+    exceptions: list[dict] | None = None
+    kpis: list[dict] | None = None
+    mermaid_flowchart: str | None = None
+    mermaid_swimlane: str | None = None
+    status: str | None = None
+
+
 @app.middleware("http")
 async def add_security_and_limits(request: Request, call_next):
     if len(request.url.path) > 2048:
@@ -503,6 +536,112 @@ async def upload_file(file: UploadFile = File(...)) -> dict:
         "text_length": len(text),
     }
 
+
+# ── Process mapping endpoints ─────────────────────────────────────────────────
+
+@app.get("/processes")
+def list_processes(org_id: str = "org-1") -> list[dict]:
+    docs = service.processes.list(org_id=org_id)
+    return [d.to_dict() for d in docs]
+
+
+@app.post("/processes", status_code=201)
+def create_process(payload: ProcessCreatePayload) -> dict:
+    from packages.common.models import ProcessDocument, ProcessStep
+    steps = [ProcessStep(**s) if isinstance(s, dict) else s for s in payload.steps]
+    doc = ProcessDocument(
+        id="",
+        org_id=payload.org_id,
+        process_name=payload.process_name,
+        trigger=payload.trigger,
+        steps=steps,
+        decision_points=payload.decision_points,
+        roles=payload.roles,
+        tools=payload.tools,
+        exceptions=payload.exceptions,
+        kpis=payload.kpis,
+        mermaid_flowchart=payload.mermaid_flowchart,
+        mermaid_swimlane=payload.mermaid_swimlane,
+        completeness_score=0.0,
+        status=payload.status,
+    )
+    created = service.processes.create(doc)
+    return created.to_dict()
+
+
+@app.get("/processes/analytics")
+def process_analytics(org_id: str = "org-1") -> dict:
+    return service.process_analytics.org_health(org_id=org_id)
+
+
+@app.get("/processes/{process_id}")
+def get_process(process_id: str) -> dict:
+    doc = service.processes.get(process_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Process not found")
+    return doc.to_dict()
+
+
+@app.put("/processes/{process_id}")
+def update_process(process_id: str, payload: ProcessUpdatePayload) -> dict:
+    changes: dict = {}
+    for field in ("process_name", "trigger", "steps", "decision_points",
+                  "roles", "tools", "exceptions", "kpis",
+                  "mermaid_flowchart", "mermaid_swimlane", "status"):
+        val = getattr(payload, field, None)
+        if val is not None:
+            changes[field] = val
+    if not changes:
+        raise HTTPException(status_code=400, detail="No changes provided")
+    try:
+        result = service.processes.update(
+            process_id,
+            changes=changes,
+            bump=payload.bump,
+            author=payload.author,
+            changelog_entry=payload.changelog_entry,
+        )
+        # Major bump held for approval — return 202 Accepted with pending payload
+        if isinstance(result, dict) and result.get("status") == "pending_approval":
+            return JSONResponse(status_code=202, content=result)
+        return result.to_dict()
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Process not found")
+
+
+@app.get("/processes/{process_id}/history")
+def process_history(process_id: str) -> list[dict]:
+    doc = service.processes.get(process_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Process not found")
+    return service.processes.history(process_id)
+
+
+@app.get("/processes/{process_id}/versions/{version}")
+def get_process_version(process_id: str, version: str) -> dict:
+    doc = service.processes.get_version(process_id, version)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Version not found")
+    return doc.to_dict()
+
+
+@app.delete("/processes/{process_id}", status_code=204)
+def delete_process(process_id: str) -> None:
+    doc = service.processes.get(process_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Process not found")
+    service.processes.delete(process_id)
+
+
+@app.get("/processes/{process_id}/completeness")
+def process_completeness(process_id: str) -> dict:
+    doc = service.processes.get(process_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Process not found")
+    return service.processes.completeness_breakdown(doc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 @app.post("/admin/runtime/reload")
 def admin_runtime_reload(request: Request) -> dict:
