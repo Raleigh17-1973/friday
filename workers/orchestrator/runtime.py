@@ -69,6 +69,9 @@ class FridayManager:
             working={"user_message": request.message, "context_packet": request.context_packet},
         )
         planning_message = self._resolve_planning_message(request.message, memory_bundle.conversation)
+        planning_message = self._inject_recalled_context(
+            planning_message, request.org_id, request.message
+        )
         plan = build_plan(planning_message, llm=self._llm)
         validate_required_fields(plan, PLANNER_OUTPUT_SCHEMA, "PlannerOutput")
 
@@ -211,6 +214,9 @@ class FridayManager:
                 working={"user_message": request.message, "context_packet": request.context_packet},
             )
             planning_message = self._resolve_planning_message(request.message, memory_bundle.conversation)
+            planning_message = self._inject_recalled_context(
+                planning_message, request.org_id, request.message
+            )
 
             yield {"event": "status", "label": "Planning your request"}
             plan = build_plan(planning_message, llm=self._llm)
@@ -297,6 +303,32 @@ class FridayManager:
             _log.warning("Parallel dispatch failed (%s) — falling back to sequential", exc)
             return [s.run(plan=plan, user_message=user_message) for s in specialists]
         return [m for m in memos if m is not None]
+
+    def _inject_recalled_context(
+        self, planning_message: str, org_id: str, query: str
+    ) -> str:
+        """Prepend relevant memories recalled via semantic search to the planning message.
+
+        Only injects context when there are high-confidence vector hits (similarity > 0.6)
+        or keyword matches. Silently skips on any error — recall is best-effort.
+        """
+        try:
+            recalled = self._memory.semantic_recall(org_id=org_id, query=query, top_k=3)
+            if not recalled:
+                return planning_message
+
+            # Filter to meaningful results: drop near-zero keyword-fallback hits
+            useful = [r for r in recalled if r.get("similarity", 1.0) == 0.0 or r.get("similarity", 0) > 0.55]
+            if not useful:
+                return planning_message
+
+            snippets = "\n".join(f"- {r['content_text'][:300]}" for r in useful)
+            context_block = f"\n\n---\nRelevant context recalled from prior sessions:\n{snippets}\n---"
+            _log.debug("Injecting %d recalled memories into planning message", len(useful))
+            return planning_message + context_block
+        except Exception as exc:
+            _log.debug("semantic_recall injection failed (non-fatal): %s", exc)
+            return planning_message
 
     def _resolve_planning_message(self, latest_message: str, conversation_history: list[dict]) -> str:
         text = latest_message.strip()

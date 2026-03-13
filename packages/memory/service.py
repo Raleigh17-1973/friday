@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import hashlib
+import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from packages.memory.repository import MemoryRepository
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -27,10 +31,27 @@ class LayeredMemoryService:
             "approval_rules": ["write actions require explicit approval"],
             "reflection_policy": "governed",
         }
+        # In-process cache: sha256(text) → embedding vector
+        self._embed_cache: dict[str, list[float]] = {}
 
     @classmethod
     def with_sqlite(cls, db_path: Path) -> "LayeredMemoryService":
         return cls(repository=MemoryRepository(db_path))
+
+    @classmethod
+    def with_postgres(cls, dsn: str) -> "LayeredMemoryService":
+        """Return a service backed by Postgres + pgvector.
+
+        Requires ``psycopg[binary]>=3.1`` and a Postgres server with
+        the pgvector extension enabled. Supabase provides this for free.
+        """
+        from packages.memory.repository import PostgresMemoryRepository
+
+        return cls(repository=PostgresMemoryRepository(dsn))
+
+    # ------------------------------------------------------------------
+    # Core memory operations
+    # ------------------------------------------------------------------
 
     def load(self, org_id: str, conversation_id: str, working: dict[str, Any]) -> MemoryBundle:
         semantic = dict(self._semantic_by_org[org_id])
@@ -58,11 +79,20 @@ class LayeredMemoryService:
         self._semantic_by_org[org_id].update(facts)
         if self._repository is not None:
             self._repository.upsert_semantic(org_id, facts)
+            # Embed each fact so it can be recalled by future queries
+            for key, value in facts.items():
+                self._store_embedding_async(
+                    org_id, f"semantic:{org_id}:{key}", f"{key}: {value}"
+                )
 
     def add_episode(self, org_id: str, episode: dict[str, Any], *, run_id: str = "unknown") -> None:
         self._episodic_by_org[org_id].append(episode)
         if self._repository is not None:
             self._repository.add_episode(org_id, run_id, episode)
+            # Embed the problem description so it's searchable
+            problem = str(episode.get("problem", ""))
+            if problem:
+                self._store_embedding_async(org_id, f"episode:{run_id}", problem)
 
     def add_candidate(self, candidate: dict[str, Any], org_id: str) -> None:
         if self._repository is None:
@@ -129,3 +159,99 @@ class LayeredMemoryService:
             "episodic_hits": epi_hits[-10:],
             "query": query,
         }
+
+    # ------------------------------------------------------------------
+    # Semantic recall (RAG)
+    # ------------------------------------------------------------------
+
+    def semantic_recall(
+        self, org_id: str, query: str, top_k: int = 5
+    ) -> list[dict[str, Any]]:
+        """Return top-k semantically similar memories for the given query.
+
+        Uses pgvector cosine similarity when Postgres is configured.
+        Falls back to keyword matching on episodic history for SQLite.
+        Returns an empty list when no relevant prior context exists.
+        """
+        if self._repository is None:
+            return []
+
+        # Try vector search first
+        embedding = self._embed(query)
+        if embedding is not None:
+            try:
+                results = self._repository.vector_search(org_id, embedding, top_k)
+                if results:
+                    _log.debug(
+                        "semantic_recall: %d vector hits for org=%s", len(results), org_id
+                    )
+                    return results
+            except Exception as exc:
+                _log.debug("semantic_recall vector search failed (%s), using keyword fallback", exc)
+
+        # Keyword fallback — works with both SQLite and Postgres
+        episodes = self._repository.get_episodes(org_id, limit=100)
+        query_lower = query.lower()
+        hits = [
+            {
+                "content_key": f"episode_{i}",
+                "content_text": str(ep),
+                "similarity": 0.0,
+            }
+            for i, ep in enumerate(episodes)
+            if query_lower in str(ep).lower()
+        ]
+        return hits[:top_k]
+
+    # ------------------------------------------------------------------
+    # Embedding helpers (best-effort, never block the main flow)
+    # ------------------------------------------------------------------
+
+    def _embed(self, text: str) -> list[float] | None:
+        """Return a 1536-dim embedding via OpenAI text-embedding-3-small.
+
+        Returns None if OPENAI_API_KEY is not set or the API call fails.
+        Results are cached in-process by content hash.
+        """
+        import os
+
+        api_key = os.getenv("OPENAI_API_KEY", "")
+        if not api_key:
+            return None
+
+        cache_key = hashlib.sha256(text[:8000].encode()).hexdigest()
+        if cache_key in self._embed_cache:
+            return self._embed_cache[cache_key]
+
+        try:
+            import openai  # type: ignore[import]
+
+            client = openai.OpenAI(api_key=api_key)
+            response = client.embeddings.create(
+                model="text-embedding-3-small",
+                input=text[:8000],
+            )
+            vec: list[float] = response.data[0].embedding
+            self._embed_cache[cache_key] = vec
+            return vec
+        except Exception as exc:
+            _log.debug("Embedding call failed: %s", exc)
+            return None
+
+    def _store_embedding_async(self, org_id: str, content_key: str, text: str) -> None:
+        """Embed text and store in the repository on a daemon thread.
+
+        Failures are logged but never propagated — embedding is best-effort
+        and must not slow down the main request path.
+        """
+        import threading
+
+        def _run() -> None:
+            try:
+                embedding = self._embed(text)
+                if embedding is not None and self._repository is not None:
+                    self._repository.store_embedding(org_id, content_key, text, embedding)
+            except Exception as exc:
+                _log.debug("Background embedding store failed: %s", exc)
+
+        threading.Thread(target=_run, daemon=True).start()

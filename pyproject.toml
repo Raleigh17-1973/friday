@@ -12,9 +12,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Phase 3 production dependencies:
+#   pip install -e ".[phase3]"
+# Then set FRIDAY_MEMORY_DATABASE_URL=postgresql://... to enable Postgres+pgvector
+# and FRIDAY_AUDIT_DATABASE_URL=postgresql://... for the audit store.
 phase3 = [
-  "psycopg[binary]>=3.1.0",
-  "temporalio>=1.7.0",
+  "psycopg[binary]>=3.1.0",   # Postgres driver (also used by pgvector path)
+  "temporalio>=1.7.0",         # Durable workflow engine (optional; set FRIDAY_WORKFLOW_ENGINE=temporal)
 ]
 llm-anthropic = [
   "anthropic>=0.25.0",

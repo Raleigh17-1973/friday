@@ -30,7 +30,12 @@ class FridayService:
         audit_dsn = os.getenv("FRIDAY_AUDIT_DATABASE_URL", "").strip()
         workflow_engine = os.getenv("FRIDAY_WORKFLOW_ENGINE", "inprocess").strip().lower()
         self.registry = AgentRegistry(manifests_dir=manifests_dir)
-        self.memory = LayeredMemoryService.with_sqlite(memory_db)
+        memory_dsn = os.getenv("FRIDAY_MEMORY_DATABASE_URL", "").strip()
+        self.memory = (
+            LayeredMemoryService.with_postgres(memory_dsn)
+            if memory_dsn
+            else LayeredMemoryService.with_sqlite(memory_db)
+        )
         self.policy = PolicyEngine()
         self.mcp = MCPRegistry(mcp_registry_file)
         self.tools = ToolRegistry(self.mcp)
