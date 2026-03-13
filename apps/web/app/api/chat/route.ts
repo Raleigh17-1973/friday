@@ -35,7 +35,6 @@ export async function POST(req: NextRequest) {
         controller.enqueue(enc.encode(sseEvent("response.in_progress", { label: "Drafting response" })));
         for (const token of text.split(" ")) {
           controller.enqueue(enc.encode(sseEvent("response.output_text.delta", { text: `${token} ` })));
-          await new Promise((resolve) => setTimeout(resolve, 20));
         }
 
         controller.enqueue(enc.encode(sseEvent("response.completed", { at: new Date().toISOString() })));

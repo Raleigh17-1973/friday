@@ -1,0 +1,43 @@
+from __future__ import annotations
+
+import json
+import re
+from abc import ABC, abstractmethod
+
+
+class LLMProvider(ABC):
+    """Abstract base for pluggable LLM providers."""
+
+    @abstractmethod
+    def complete(self, system: str, prompt: str, **kwargs) -> str:
+        """Send a system + user prompt and return the text response."""
+
+    def complete_json(self, system: str, prompt: str, **kwargs) -> dict:
+        """Send a prompt expecting JSON back. Returns parsed dict or empty dict on failure."""
+        text = self.complete(system, prompt, **kwargs)
+        return _parse_llm_json(text)
+
+
+def _parse_llm_json(text: str) -> dict:
+    """Strip markdown fences and parse JSON from LLM output."""
+    text = text.strip()
+    # Strip ```json ... ``` or ``` ... ``` fences
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text)
+    text = text.strip()
+    try:
+        result = json.loads(text)
+        if isinstance(result, dict):
+            return result
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # Try extracting the first { ... } block
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        try:
+            result = json.loads(match.group())
+            if isinstance(result, dict):
+                return result
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return {}

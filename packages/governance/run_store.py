@@ -24,6 +24,9 @@ class RunStore(ABC):
     def get_events(self, run_id: str) -> list[dict[str, Any]]:
         raise NotImplementedError
 
+    def list_runs(self, limit: int = 50) -> list[dict[str, Any]]:
+        return []
+
 
 class SQLiteRunStore(RunStore):
     def __init__(self, db_path: Path) -> None:
@@ -89,6 +92,26 @@ class SQLiteRunStore(RunStore):
                 (run_id,),
             ).fetchall()
         return [json.loads(row["event_json"]) for row in rows]
+
+    def list_runs(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select trace_json from run_traces order by created_at desc limit ?",
+                (limit,),
+            ).fetchall()
+        results = []
+        for row in rows:
+            try:
+                data = json.loads(row["trace_json"])
+                results.append({
+                    "run_id": data.get("run_id", ""),
+                    "conversation_id": data.get("conversation_id", ""),
+                    "user_id": data.get("user_id", ""),
+                    "created_at": data.get("created_at", ""),
+                })
+            except (json.JSONDecodeError, KeyError):
+                pass
+        return results
 
 
 class PostgresRunStore(RunStore):

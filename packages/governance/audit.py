@@ -49,3 +49,20 @@ class AuditLog:
         events = self._run_store.get_events(run_id)
         self._events[run_id] = list(events)
         return events
+
+    def list_runs(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return lightweight run summaries (run_id, conversation_id, user_id, created_at)."""
+        in_memory = [
+            {
+                "run_id": t.run_id,
+                "conversation_id": t.conversation_id,
+                "user_id": t.user_id,
+                "created_at": t.created_at,
+            }
+            for t in sorted(self._runs.values(), key=lambda t: t.created_at, reverse=True)
+        ]
+        if in_memory:
+            return in_memory[:limit]
+        if self._run_store is not None:
+            return self._run_store.list_runs(limit=limit)
+        return []

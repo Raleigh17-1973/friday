@@ -112,6 +112,9 @@ class LayeredMemoryService:
         self._repository.mark_candidate_promoted(candidate_id)
         return {"status": "promoted", "candidate_id": candidate_id, "candidate_type": candidate_type}
 
+    def clear_conversation(self, conversation_id: str) -> None:
+        self._conversation_history.pop(conversation_id, None)
+
     def search(self, org_id: str, query: str) -> dict[str, Any]:
         if self._repository is not None:
             self._semantic_by_org[org_id].update(self._repository.get_semantic(org_id))

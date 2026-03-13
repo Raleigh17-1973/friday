@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from packages.agents.registry import AgentRegistry
@@ -30,6 +31,9 @@ from workers.orchestrator.critic import run_critic
 from workers.orchestrator.planner import build_plan
 from workers.orchestrator.synthesizer import synthesize
 
+if TYPE_CHECKING:
+    from packages.llm.base import LLMProvider
+
 
 class FridayManager:
     def __init__(
@@ -41,6 +45,7 @@ class FridayManager:
         approvals: ApprovalService,
         audit: AuditLog,
         tool_executor: ToolExecutor | None = None,
+        llm: "LLMProvider | None" = None,
     ) -> None:
         self._registry = registry
         self._memory = memory
@@ -48,6 +53,7 @@ class FridayManager:
         self._approvals = approvals
         self._audit = audit
         self._tool_executor = tool_executor or ToolExecutor(Path.cwd())
+        self._llm = llm
 
     def run(self, request: ChatRequest) -> dict:
         run_id = f"run_{uuid4().hex[:12]}"
@@ -58,12 +64,14 @@ class FridayManager:
             working={"user_message": request.message, "context_packet": request.context_packet},
         )
         planning_message = self._resolve_planning_message(request.message, memory_bundle.conversation)
-        plan = build_plan(planning_message)
+        plan = build_plan(planning_message, llm=self._llm)
         validate_required_fields(plan, PLANNER_OUTPUT_SCHEMA, "PlannerOutput")
 
         specialists = []
         for specialist_id in plan.recommended_specialists:
-            specialists.append(self._registry.build_specialist(specialist_id))
+            s = self._registry.build_specialist(specialist_id)
+            s.llm = self._llm
+            specialists.append(s)
 
         tool_calls = self._run_context_tools(
             tool_names=plan.required_tools,
@@ -76,10 +84,10 @@ class FridayManager:
         for memo in memos:
             validate_required_fields(memo, SPECIALIST_MEMO_SCHEMA, "SpecialistMemo")
 
-        critic_report = run_critic(memos)
+        critic_report = run_critic(memos, llm=self._llm)
         validate_required_fields(critic_report, CRITIC_REPORT_SCHEMA, "CriticReport")
 
-        final_answer = synthesize(plan, memos, critic_report)
+        final_answer = synthesize(plan, memos, critic_report, llm=self._llm)
         validate_required_fields(final_answer, FINAL_ANSWER_PACKAGE_SCHEMA, "FinalAnswerPackage")
 
         requested_scopes = list(request.context_packet.get("requested_write_scopes", []))

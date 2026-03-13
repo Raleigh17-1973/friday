@@ -1,8 +1,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from packages.common.models import PlannerOutput, SpecialistMemo
+
+if TYPE_CHECKING:
+    from packages.llm.base import LLMProvider
+
+_SPECIALIST_SYSTEM = """\
+You are a {purpose} specialist in Friday, a multi-agent business operating system.
+Your job is to analyze business problems and produce a structured expert memo.
+
+Rules:
+{rules}
+
+Respond ONLY with valid JSON (no markdown fences) matching this exact structure:
+{{
+  "analysis": "<detailed multi-sentence analysis>",
+  "recommendation": "<specific, actionable recommendation>",
+  "assumptions": ["<assumption 1>", "<assumption 2>"],
+  "risks": ["<risk 1>", "<risk 2>"],
+  "evidence": ["<evidence point 1>"],
+  "confidence": <0.0-1.0 float>,
+  "questions": ["<clarifying question if info is missing>"]
+}}"""
 
 
 @dataclass
@@ -10,8 +32,43 @@ class Specialist:
     specialist_id: str
     purpose: str
     shared_rules: list[str] = field(default_factory=list)
+    llm: "LLMProvider | None" = field(default=None, repr=False)
 
     def run(self, plan: PlannerOutput, user_message: str) -> SpecialistMemo:
+        if self.llm is not None:
+            try:
+                return self._run_with_llm(plan, user_message)
+            except Exception:
+                pass
+        return self._run_stub(plan, user_message)
+
+    def _run_with_llm(self, plan: PlannerOutput, user_message: str) -> SpecialistMemo:
+        assert self.llm is not None
+        rules_text = "\n".join(f"- {r}" for r in self.shared_rules) if self.shared_rules else "- Be precise and evidence-based."
+        system = _SPECIALIST_SYSTEM.format(purpose=self.purpose, rules=rules_text)
+        prompt = (
+            f"Problem: {user_message}\n\n"
+            f"Planner context:\n"
+            f"- Domains: {', '.join(plan.domains_involved) or 'general'}\n"
+            f"- Risk level: {plan.risk_level.value}\n"
+            f"- Output format: {plan.output_format}\n"
+            f"- Missing information: {', '.join(plan.missing_information) or 'none identified'}"
+        )
+        parsed = self.llm.complete_json(system, prompt, max_tokens=1024)
+        if parsed and "analysis" in parsed and "recommendation" in parsed:
+            return SpecialistMemo(
+                specialist_id=self.specialist_id,
+                analysis=str(parsed.get("analysis", "")),
+                recommendation=str(parsed.get("recommendation", "")),
+                assumptions=list(parsed.get("assumptions", [])),
+                risks=list(parsed.get("risks", [])),
+                evidence=list(parsed.get("evidence", [])),
+                confidence=float(parsed.get("confidence", 0.75)),
+                questions=list(parsed.get("questions", [])),
+            )
+        raise ValueError("LLM returned unparseable specialist memo")
+
+    def _run_stub(self, plan: PlannerOutput, user_message: str) -> SpecialistMemo:
         text = user_message.lower()
         facts = [
             f"Planner domains: {', '.join(plan.domains_involved) or 'none'}",

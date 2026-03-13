@@ -1,6 +1,8 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+const BACKEND = process.env.NEXT_PUBLIC_FRIDAY_BACKEND_URL ?? "http://127.0.0.1:8000";
 
 import { useChatState } from "@/components/use-chat-state";
 import type { ChatMode, ConversationThread, FridayMessage } from "@/lib/types";
@@ -199,14 +201,39 @@ function Composer({
   );
 }
 
+type Approval = {
+  approval_id: string;
+  request_type: string;
+  payload: Record<string, unknown>;
+  status: string;
+  created_at: string;
+};
+
 function RightRail() {
   const tabs = ["Context", "Experts", "Sources", "Artifacts", "Approvals", "Run"];
   const [active, setActive] = useState(tabs[0]);
+  const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [approvalsLoading, setApprovalsLoading] = useState(false);
+
+  useEffect(() => {
+    if (active !== "Approvals") return;
+    setApprovalsLoading(true);
+    fetch(`${BACKEND}/approvals`)
+      .then((res) => res.json())
+      .then((data: unknown) => setApprovals(Array.isArray(data) ? (data as Approval[]) : []))
+      .catch(() => setApprovals([]))
+      .finally(() => setApprovalsLoading(false));
+  }, [active]);
+
+  const handleApproval = (approvalId: string, action: "approve" | "reject") => {
+    fetch(`${BACKEND}/approvals/${approvalId}/${action}`, { method: "POST" })
+      .then(() => setApprovals((prev) => prev.filter((a) => a.approval_id !== approvalId)))
+      .catch(() => undefined);
+  };
 
   const panel = useMemo(() => {
     if (active === "Experts") return ["Consulted Finance", "Consulted Operations", "Red-team pass complete"];
     if (active === "Sources") return ["Q1 board memo", "Pricing dashboard", "Pipeline exports"];
-    if (active === "Approvals") return ["No pending approvals"];
     if (active === "Artifacts") return ["Exec summary", "Action checklist", "Risk table"];
     if (active === "Run") return ["State: completed", "Latency: 2.4s", "Confidence: 0.72"];
     return ["Active workspace: Default", "Pinned memory: ROI discipline", "Mode: Ask/Plan/Act"];
@@ -221,11 +248,33 @@ function RightRail() {
           </button>
         ))}
       </nav>
-      <ul>
-        {panel.map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
+      {active === "Approvals" ? (
+        <div className="approvals-panel">
+          {approvalsLoading ? (
+            <p>Loading...</p>
+          ) : approvals.length === 0 ? (
+            <p>No pending approvals</p>
+          ) : (
+            <ul>
+              {approvals.map((approval) => (
+                <li key={approval.approval_id} className="approval-item">
+                  <span className="approval-type">{approval.request_type}</span>
+                  <div className="approval-actions">
+                    <button onClick={() => handleApproval(approval.approval_id, "approve")}>Approve</button>
+                    <button onClick={() => handleApproval(approval.approval_id, "reject")}>Reject</button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : (
+        <ul>
+          {panel.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      )}
     </aside>
   );
 }
@@ -250,6 +299,7 @@ export function Workspace() {
   } = useChatState();
 
   const activeThread = threads.find((thread) => thread.id === activeThreadId) ?? threads[0];
+  const showReload = !!process.env.NEXT_PUBLIC_ADMIN_API_KEY;
   const [reloadState, setReloadState] = useState<"idle" | "loading" | "ok" | "error">("idle");
   const [reloadMessage, setReloadMessage] = useState("");
 
@@ -303,19 +353,23 @@ export function Workspace() {
             <p role="status" aria-live="polite">
               Connection: {connectionState}
             </p>
-            <button
-              type="button"
-              className={`reload-runtime ${reloadState}`}
-              onClick={handleReloadRuntime}
-              disabled={reloadState === "loading"}
-            >
-              {reloadState === "loading" ? "Reloading..." : "Reload Runtime"}
-            </button>
-            {reloadMessage ? (
-              <p className="reload-status" role="status" aria-live="polite">
-                {reloadMessage}
-              </p>
-            ) : null}
+            {showReload && (
+              <>
+                <button
+                  type="button"
+                  className={`reload-runtime ${reloadState}`}
+                  onClick={handleReloadRuntime}
+                  disabled={reloadState === "loading"}
+                >
+                  {reloadState === "loading" ? "Reloading..." : "Reload Runtime"}
+                </button>
+                {reloadMessage ? (
+                  <p className="reload-status" role="status" aria-live="polite">
+                    {reloadMessage}
+                  </p>
+                ) : null}
+              </>
+            )}
           </div>
         </header>
         <Transcript messages={messages} progress={progress} />

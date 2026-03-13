@@ -21,6 +21,7 @@ function titleFromText(text: string) {
 }
 
 const STORAGE_KEY = "friday_web_state_v1";
+const BACKEND = process.env.NEXT_PUBLIC_FRIDAY_BACKEND_URL ?? "http://127.0.0.1:8000";
 
 type PersistedState = {
   threads: ConversationThread[];
@@ -153,6 +154,7 @@ export function useChatState() {
       delete copy[threadId];
       return copy;
     });
+    fetch(`${BACKEND}/conversations/${threadId}`, { method: "DELETE" }).catch(() => undefined);
   };
 
   const stop = () => {

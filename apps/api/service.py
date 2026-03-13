@@ -12,6 +12,7 @@ from packages.memory.service import LayeredMemoryService
 from packages.tools.mcp import MCPRegistry
 from packages.tools.policy_wrapped_tools import ToolExecutor
 from packages.tools.registry import ToolRegistry
+from packages.llm.factory import create_llm_provider
 from workers.evals.harness import EvalHarness
 from workers.orchestrator.runtime import FridayManager
 from workers.orchestrator.workflows import InProcessWorkflowEngine, TemporalWorkflowEngine
@@ -33,9 +34,11 @@ class FridayService:
         self.policy = PolicyEngine()
         self.mcp = MCPRegistry(mcp_registry_file)
         self.tools = ToolRegistry(self.mcp)
-        self.approvals = ApprovalService()
+        approvals_db = self.root / "data" / "friday_approvals.sqlite3"
+        self.approvals = ApprovalService(db_path=approvals_db)
         run_store = PostgresRunStore(audit_dsn) if audit_dsn else SQLiteRunStore(audit_db)
         self.audit = AuditLog(run_store=run_store)
+        self.llm = create_llm_provider()
         self.manager = FridayManager(
             registry=self.registry,
             memory=self.memory,
@@ -43,6 +46,7 @@ class FridayService:
             approvals=self.approvals,
             audit=self.audit,
             tool_executor=ToolExecutor(self.root),
+            llm=self.llm,
         )
         if workflow_engine == "temporal":
             self.workflow = TemporalWorkflowEngine(
@@ -73,6 +77,9 @@ class FridayService:
         trace = self.audit.get_run(response["run_id"])
         if trace is not None:
             response["reflection"] = self.reflection.reflect(trace, self.memory).to_dict()
+        # Ensure top-level "response" key for backward compatibility with static UI
+        if "response" not in response:
+            response["response"] = (response.get("final_answer") or {}).get("direct_answer", "")
         return response
 
     def get_dashboard_metrics(self) -> dict:
