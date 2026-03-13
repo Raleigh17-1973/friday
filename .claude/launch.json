@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "friday-api",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "uvicorn", "apps.api.main:app", "--host", "127.0.0.1", "--port", "8000", "--reload"],
+      "port": 8000
+    },
+    {
+      "name": "friday-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000
+    },
+    {
+      "name": "friday-temporal-worker",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["scripts/run_temporal_worker.py"],
+      "port": 7233
+    }
+  ]
+}

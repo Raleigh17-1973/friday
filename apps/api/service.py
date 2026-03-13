@@ -64,12 +64,25 @@ class FridayService:
         self.eval_harness = EvalHarness(self.root)
         self.reflection = ReflectionWorker()
 
-    def execute_chat_payload(self, payload: dict) -> dict:
+    def execute_chat_payload(self, payload: dict, upload_store: dict | None = None) -> dict:
         from packages.common.models import ChatRequest
 
         message = str(payload.get("message") or "").strip()
         if not message:
             raise ValueError("message is required")
+
+        # Inject uploaded file context blocks if context_ids were supplied
+        context_ids: list[str] = payload.get("context_ids") or []
+        if context_ids and upload_store:
+            context_blocks: list[str] = []
+            for cid in context_ids:
+                entry = upload_store.get(cid)
+                if entry:
+                    context_blocks.append(
+                        f"[Attached file: {entry['filename']} ({entry['type']})]\n{entry['text'][:8000]}"
+                    )
+            if context_blocks:
+                message = "\n\n---\n".join(context_blocks) + "\n\n---\nUser request: " + message
 
         request = ChatRequest(
             user_id=str(payload.get("user_id") or "user-1"),

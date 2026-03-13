@@ -51,6 +51,9 @@ class SpecialistMemo:
     evidence: list[str]
     confidence: float
     questions: list[str]
+    # Tree-of-thought scenarios — populated only when risk_level is HIGH.
+    # Keys: "optimistic", "base", "pessimistic"; each has description/outcome/probability/key_driver.
+    scenarios: dict[str, Any] | None = None
 
 
 @dataclass
@@ -143,6 +146,7 @@ class RunTrace:
                     evidence=list(memo["evidence"]),
                     confidence=float(memo["confidence"]),
                     questions=list(memo["questions"]),
+                    scenarios=memo.get("scenarios"),
                 )
                 for memo in data["specialist_memos"]
             ],

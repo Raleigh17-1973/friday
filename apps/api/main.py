@@ -20,7 +20,7 @@ from apps.api.service import FridayService
 from apps.api.security import AdminAuth, RateLimiter
 
 try:
-    from fastapi import FastAPI, HTTPException, Request
+    from fastapi import FastAPI, File, HTTPException, Request, UploadFile
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
     from fastapi.staticfiles import StaticFiles
@@ -29,6 +29,10 @@ except ModuleNotFoundError as exc:  # pragma: no cover
     raise RuntimeError(
         "FastAPI is required for apps/api/main.py. Install project dependencies first."
     ) from exc
+
+# In-process upload context store: context_id -> {"filename": str, "text": str, "type": str}
+# Lost on restart; use a persistent store (Redis, DB) for production.
+_UPLOAD_STORE: dict[str, dict] = {}
 
 app = FastAPI(title="Friday API", version="0.2.0")
 
@@ -64,6 +68,13 @@ class ChatPayload(BaseModel):
     org_id: str = "org-1"
     conversation_id: str = "conv-1"
     context_packet: dict[str, Any] = {}
+    # Optional context IDs from POST /upload — injected as context blocks
+    context_ids: list[str] = []
+
+
+class FeedbackPayload(BaseModel):
+    approved: bool
+    notes: str = ""
 
 
 class PromoteCandidatePayload(BaseModel):
@@ -105,7 +116,7 @@ def health() -> dict[str, str]:
 @app.post("/chat")
 def chat(payload: ChatPayload) -> dict:
     try:
-        return service.execute_chat_payload(payload.model_dump())
+        return service.execute_chat_payload(payload.model_dump(), upload_store=_UPLOAD_STORE)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -174,6 +185,20 @@ def get_run(run_id: str) -> dict:
     if trace is None:
         raise HTTPException(status_code=404, detail="run not found")
     return asdict(trace)
+
+
+@app.post("/runs/{run_id}/feedback")
+def run_feedback(run_id: str, payload: FeedbackPayload) -> dict:
+    """Record user approval or rejection of a run output.
+
+    The episodic learning loop uses this signal to bias future planning toward
+    specialist combinations that have been approved for similar requests.
+    """
+    try:
+        service.manager.record_feedback(run_id, approved=payload.approved, notes=payload.notes)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"status": "recorded", "run_id": run_id, "approved": payload.approved}
 
 
 @app.post("/approvals/{approval_id}/approve")
@@ -322,6 +347,124 @@ def admin_agent_status(agent_id: str, payload: dict, request: Request) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"agent": asdict(manifest)}
+
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)) -> dict:
+    """Extract text from an uploaded file and return a context_id.
+
+    Supported types: .txt, .md, .csv, .pdf (requires pypdf), .docx (requires python-docx),
+    .png/.jpg/.jpeg/.webp (requires openai — routed to GPT-4o vision).
+
+    Include the returned context_id in the ``context_ids`` field of a /chat request
+    to inject the extracted text as specialist context.
+    """
+    import csv as _csv
+    import io
+    import uuid
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="filename is required")
+
+    raw = await file.read()
+    name = file.filename.lower()
+    ext = name.rsplit(".", 1)[-1] if "." in name else ""
+
+    text = ""
+    doc_type = ext
+
+    if ext in ("txt", "md"):
+        try:
+            text = raw.decode("utf-8", errors="replace")
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"Could not decode text file: {exc}") from exc
+
+    elif ext == "csv":
+        try:
+            reader = _csv.reader(io.StringIO(raw.decode("utf-8", errors="replace")))
+            rows = list(reader)
+            text = "\n".join(", ".join(row) for row in rows[:500])  # cap at 500 rows
+            if len(rows) > 500:
+                text += f"\n... ({len(rows) - 500} rows truncated)"
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"CSV parse error: {exc}") from exc
+
+    elif ext == "pdf":
+        try:
+            import pypdf  # type: ignore
+            reader = pypdf.PdfReader(io.BytesIO(raw))
+            pages = [page.extract_text() or "" for page in reader.pages]
+            text = "\n\n".join(p for p in pages if p.strip())
+        except ImportError:
+            raise HTTPException(
+                status_code=422,
+                detail="PDF extraction requires 'pypdf'. Install it: pip install pypdf",
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"PDF parse error: {exc}") from exc
+
+    elif ext == "docx":
+        try:
+            import docx  # type: ignore
+            doc = docx.Document(io.BytesIO(raw))
+            text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+        except ImportError:
+            raise HTTPException(
+                status_code=422,
+                detail="DOCX extraction requires 'python-docx'. Install it: pip install python-docx",
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"DOCX parse error: {exc}") from exc
+
+    elif ext in ("png", "jpg", "jpeg", "webp", "gif"):
+        # Route to GPT-4o vision
+        try:
+            import base64
+            from openai import OpenAI  # type: ignore
+            b64 = base64.b64encode(raw).decode("utf-8")
+            mime = f"image/{ext if ext != 'jpg' else 'jpeg'}"
+            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+            resp = client.chat.completions.create(
+                model="gpt-4o",
+                max_tokens=1000,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                        {"type": "text", "text": "Describe this image in detail. Extract all text, tables, charts, and key information visible."},
+                    ],
+                }],
+            )
+            text = resp.choices[0].message.content or ""
+            doc_type = "image_vision"
+        except ImportError:
+            raise HTTPException(status_code=422, detail="Image analysis requires the 'openai' package")
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"Vision analysis error: {exc}") from exc
+
+    else:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported file type: .{ext}. Supported: txt, md, csv, pdf, docx, png, jpg, jpeg, webp",
+        )
+
+    if not text.strip():
+        raise HTTPException(status_code=422, detail="No text could be extracted from the file")
+
+    context_id = f"ctx_{uuid.uuid4().hex[:12]}"
+    _UPLOAD_STORE[context_id] = {
+        "filename": file.filename,
+        "text": text,
+        "type": doc_type,
+        "chars": len(text),
+    }
+
+    return {
+        "context_id": context_id,
+        "filename": file.filename,
+        "type": doc_type,
+        "text_length": len(text),
+    }
 
 
 @app.post("/admin/runtime/reload")

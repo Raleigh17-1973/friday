@@ -17,6 +17,51 @@ Rules:
 {rules}
 """
 
+# Tree-of-thought contract — replaces _OUTPUT_CONTRACT when risk_level is HIGH
+_OUTPUT_CONTRACT_TOT = """
+---
+## Response Format (HIGH RISK — Tree-of-Thought Mode)
+
+This request is classified HIGH RISK. You must reason through three distinct scenarios before committing to a recommendation. This reduces overconfidence and surfaces the full decision space.
+
+Respond ONLY with valid JSON (no markdown fences):
+{
+  "analysis": "<overall analysis — the core issue and what drives the outcome difference across scenarios>",
+  "scenarios": {
+    "optimistic": {
+      "description": "<what must be true for the best case>",
+      "outcome": "<specific, quantified outcome if possible>",
+      "probability": <0.0-1.0>,
+      "key_driver": "<the single variable that makes this scenario possible>"
+    },
+    "base": {
+      "description": "<most likely outcome given current evidence>",
+      "outcome": "<specific, quantified outcome if possible>",
+      "probability": <0.0-1.0>,
+      "key_driver": "<the primary uncertainty driving this outcome>"
+    },
+    "pessimistic": {
+      "description": "<realistic downside — not catastrophizing>",
+      "outcome": "<specific, quantified outcome if possible>",
+      "probability": <0.0-1.0>,
+      "key_driver": "<what makes the downside likely>"
+    }
+  },
+  "recommendation": "<which scenario should be planned for, and why — must be GO / NO-GO / CONDITIONAL>",
+  "assumptions": ["<each assumption that determines which scenario materializes>"],
+  "risks": ["<risks that could push outcome toward pessimistic>"],
+  "evidence": ["<data from the problem statement used in your analysis>"],
+  "confidence": <0.0-1.0 float>,
+  "questions": ["<only if a specific unknown would materially shift your scenario probabilities>"]
+}
+
+CRITICAL:
+1. Scenario probabilities must sum to 1.0
+2. Base case probability must be highest (this is the most likely outcome)
+3. Each scenario must have a distinct, specific key driver — not generic labels
+4. Anti-sycophancy: the optimistic scenario is not the plan — it is an upper bound
+"""
+
 # Appended to every specialist prompt (loaded or fallback) to enforce output format + quality
 _OUTPUT_CONTRACT = """
 ---
@@ -52,27 +97,32 @@ class Specialist:
     system_prompt: str = field(default="")
     llm: "LLMProvider | None" = field(default=None, repr=False)
 
-    def run(self, plan: PlannerOutput, user_message: str) -> SpecialistMemo:
+    def run(self, plan: PlannerOutput, user_message: str, tot_mode: bool = False) -> SpecialistMemo:
+        """Run the specialist, optionally in tree-of-thought (3-scenario) mode.
+
+        ``tot_mode`` is automatically set to True when ``plan.risk_level`` is HIGH
+        by the orchestrator.  The specialist generates optimistic / base / pessimistic
+        scenarios and the synthesizer picks the best-supported path.
+        """
         if self.llm is not None:
             try:
-                return self._run_with_llm(plan, user_message)
+                return self._run_with_llm(plan, user_message, tot_mode=tot_mode)
             except Exception:
                 pass
         return self._run_stub(plan, user_message)
 
-    def _build_system_prompt(self) -> str:
+    def _build_system_prompt(self, tot_mode: bool = False) -> str:
+        contract = _OUTPUT_CONTRACT_TOT if tot_mode else _OUTPUT_CONTRACT
         if self.system_prompt:
-            # Use the rich .md prompt, append the JSON output contract
-            return self.system_prompt + "\n" + _OUTPUT_CONTRACT
+            return self.system_prompt + "\n" + contract
         else:
-            # Fallback: generic template + contract
             rules_text = "\n".join(f"- {r}" for r in self.shared_rules) if self.shared_rules else "- Be precise and evidence-based."
             base = _SPECIALIST_SYSTEM_FALLBACK.format(purpose=self.purpose, rules=rules_text)
-            return base + _OUTPUT_CONTRACT
+            return base + contract
 
-    def _run_with_llm(self, plan: PlannerOutput, user_message: str) -> SpecialistMemo:
+    def _run_with_llm(self, plan: PlannerOutput, user_message: str, tot_mode: bool = False) -> SpecialistMemo:
         assert self.llm is not None
-        system = self._build_system_prompt()
+        system = self._build_system_prompt(tot_mode=tot_mode)
         prompt = (
             f"Problem: {user_message}\n\n"
             f"Planner context:\n"
@@ -81,7 +131,8 @@ class Specialist:
             f"- Output format requested: {plan.output_format}\n"
             f"- Missing information (if any): {', '.join(plan.missing_information) or 'none identified'}"
         )
-        parsed = self.llm.complete_json(system, prompt, max_tokens=1500)
+        max_tokens = 2000 if tot_mode else 1500
+        parsed = self.llm.complete_json(system, prompt, max_tokens=max_tokens)
         if parsed and "analysis" in parsed and "recommendation" in parsed:
             return SpecialistMemo(
                 specialist_id=self.specialist_id,
@@ -92,6 +143,7 @@ class Specialist:
                 evidence=list(parsed.get("evidence", [])),
                 confidence=float(parsed.get("confidence", 0.75)),
                 questions=list(parsed.get("questions", [])),
+                scenarios=parsed.get("scenarios") if tot_mode else None,
             )
         raise ValueError("LLM returned unparseable specialist memo")
 
@@ -111,6 +163,7 @@ class Specialist:
         risks = [
             "Execution risk if ownership is unclear.",
             "Decision quality drops if missing information is ignored.",
+            f"Escalation note: connect an LLM provider for real {self.specialist_id} analysis.",
         ]
         evidence = [*facts, *[f"Registry rule: {rule}" for rule in self.shared_rules]]
         analysis = "\n".join(

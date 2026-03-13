@@ -35,6 +35,33 @@ Write a complete, specific, professional response to the user's request — the 
 Do NOT wrap your response in JSON. Write directly — the user will read your tokens as they stream in.
 Be crisp, expert, and complete."""
 
+_SYNTHESIZER_HIGH_RISK_SYSTEM = """\
+You are Friday's synthesis engine processing a HIGH RISK request.
+
+Each specialist has provided three scenarios (optimistic, base, pessimistic) with probabilities and key drivers. Your job is to:
+1. Identify which scenario is most strongly supported by evidence across ALL specialists
+2. Synthesize the base case (or conditional path) into the final deliverable
+3. Explicitly call out the key variable that determines which scenario materialises
+4. Surface the single most important guard-rail the user must put in place
+
+RULES:
+1. Do NOT simply pick the optimistic scenario — default to the base case unless evidence strongly supports optimistic
+2. The direct_answer must show which scenarios you considered and why you chose the base/conditional path
+3. Risks must come from the pessimistic scenarios across specialists — these are the live failure modes
+4. The what_i_would_do_first must be the guard-rail that prevents the pessimistic scenario
+5. State the probability-weighted expected outcome when numbers are available
+
+Respond ONLY with valid JSON (no markdown fences):
+{
+  "direct_answer": "<complete deliverable — show scenario context, selected path, and guard-rails>",
+  "executive_summary": "<1-2 sentences — name the selected scenario and the critical variable>",
+  "key_assumptions": ["<each assumption that determines which scenario materialises>"],
+  "major_risks": ["<specific risk from pessimistic scenarios — labeled LIKELY / POSSIBLE / UNLIKELY BUT CATASTROPHIC>"],
+  "recommended_next_steps": ["<step 1>", "<step 2>", "<step 3>"],
+  "what_i_would_do_first": "<the single guard-rail that prevents the pessimistic case>",
+  "confidence": <0.0-1.0 float>
+}"""
+
 _SYNTHESIZER_REFINEMENT_SYSTEM = """\
 You are Friday's synthesis engine performing a REFINEMENT PASS. A previous synthesis attempt had low confidence.
 
@@ -380,17 +407,24 @@ def synthesize(
     llm: "LLMProvider | None" = None,
     refinement_pass: bool = False,
 ) -> FinalAnswerPackage:
+    from packages.common.models import RiskLevel
     experts = [memo.specialist_id for memo in memos]
     top_recs = [memo.recommendation for memo in memos[:4]]
     assumptions = [assumption for memo in memos for assumption in memo.assumptions][:4]
     risks = list(dict.fromkeys([*critic.residual_risks, *critic.blind_spots]))[:5]
+    high_risk = plan.risk_level == RiskLevel.HIGH
 
     if llm is not None:
         try:
-            memos_text = "\n\n".join(
-                f"Specialist: {m.specialist_id}\nAnalysis: {m.analysis}\nRecommendation: {m.recommendation}"
-                for m in memos
-            )
+            # Build memo text — include scenarios when in ToT mode
+            memo_parts = []
+            for m in memos:
+                part = f"Specialist: {m.specialist_id}\nAnalysis: {m.analysis}\nRecommendation: {m.recommendation}"
+                if m.scenarios:
+                    part += f"\nScenarios: {json.dumps(m.scenarios, indent=2)}"
+                memo_parts.append(part)
+            memos_text = "\n\n".join(memo_parts)
+
             critic_text = (
                 f"Critic blind spots: {json.dumps(critic.blind_spots)}\n"
                 f"Challenged assumptions: {json.dumps(critic.challenged_assumptions)}\n"
@@ -400,11 +434,17 @@ def synthesize(
             llm_prompt = (
                 f"User question: {plan.problem_statement}\n\n"
                 f"Planner identified domains: {', '.join(plan.domains_involved)}\n"
-                f"Output format requested: {plan.output_format}\n\n"
+                f"Output format requested: {plan.output_format}\n"
+                f"Risk level: {plan.risk_level.value}\n\n"
                 f"Specialist memos:\n{memos_text}\n\n"
                 f"Critic review:\n{critic_text}"
             )
-            system = _SYNTHESIZER_REFINEMENT_SYSTEM if refinement_pass else _SYNTHESIZER_SYSTEM
+            if refinement_pass:
+                system = _SYNTHESIZER_REFINEMENT_SYSTEM
+            elif high_risk:
+                system = _SYNTHESIZER_HIGH_RISK_SYSTEM
+            else:
+                system = _SYNTHESIZER_SYSTEM
             parsed = llm.complete_json(system, llm_prompt, max_tokens=3000)
             if parsed and "direct_answer" in parsed:
                 return FinalAnswerPackage(

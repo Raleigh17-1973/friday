@@ -33,7 +33,7 @@ async function sendMessage(event) {
   sendBtn.disabled = true;
 
   try {
-    const res = await fetch("/api/chat", {
+    const res = await fetch("/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -45,7 +45,9 @@ async function sendMessage(event) {
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    addMessage("assistant", data.response, `Domain: ${data.domain}`);
+    const reply = data?.final_answer?.direct_answer ?? data?.response ?? "No response";
+    const domains = data?.planner?.domains_involved?.join(", ") ?? data?.domain ?? "";
+    addMessage("assistant", reply, domains ? `Domain: ${domains}` : "");
   } catch (error) {
     addMessage("assistant", "Request failed. Please try again.", "Error");
   } finally {

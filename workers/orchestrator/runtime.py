@@ -70,7 +70,7 @@ class FridayManager:
         )
         planning_message = self._resolve_planning_message(request.message, memory_bundle.conversation)
         planning_message = self._inject_recalled_context(
-            planning_message, request.org_id, request.message
+            planning_message, request.org_id, request.message, episodic=memory_bundle.episodic
         )
         plan = build_plan(planning_message, llm=self._llm)
         validate_required_fields(plan, PLANNER_OUTPUT_SCHEMA, "PlannerOutput")
@@ -215,7 +215,7 @@ class FridayManager:
             )
             planning_message = self._resolve_planning_message(request.message, memory_bundle.conversation)
             planning_message = self._inject_recalled_context(
-                planning_message, request.org_id, request.message
+                planning_message, request.org_id, request.message, episodic=memory_bundle.episodic
             )
 
             yield {"event": "status", "label": "Planning your request"}
@@ -280,16 +280,24 @@ class FridayManager:
             yield {"event": "error", "message": str(exc)}
 
     def _run_specialists_parallel(self, specialists, plan, user_message: str) -> list:
-        """Run all specialists concurrently. Falls back to sequential on error."""
+        """Run all specialists concurrently. Falls back to sequential on error.
+
+        When ``plan.risk_level`` is HIGH, runs in tree-of-thought mode — each
+        specialist generates optimistic / base / pessimistic scenarios, and the
+        synthesizer selects the best-supported path.
+        """
         if not specialists:
             return []
+        tot_mode = plan.risk_level == RiskLevel.HIGH
+        if tot_mode:
+            _log.info("HIGH risk request — running %d specialists in tree-of-thought mode", len(specialists))
         if len(specialists) == 1:
-            return [specialists[0].run(plan=plan, user_message=user_message)]
+            return [specialists[0].run(plan=plan, user_message=user_message, tot_mode=tot_mode)]
         memos = [None] * len(specialists)
         try:
             with ThreadPoolExecutor(max_workers=len(specialists)) as pool:
                 future_to_idx = {
-                    pool.submit(s.run, plan=plan, user_message=user_message): i
+                    pool.submit(s.run, plan=plan, user_message=user_message, tot_mode=tot_mode): i
                     for i, s in enumerate(specialists)
                 }
                 for future in as_completed(future_to_idx):
@@ -301,34 +309,86 @@ class FridayManager:
                         memos[idx] = specialists[idx]._run_stub(plan, user_message)
         except Exception as exc:
             _log.warning("Parallel dispatch failed (%s) — falling back to sequential", exc)
-            return [s.run(plan=plan, user_message=user_message) for s in specialists]
+            return [s.run(plan=plan, user_message=user_message, tot_mode=tot_mode) for s in specialists]
         return [m for m in memos if m is not None]
 
-    def _inject_recalled_context(
-        self, planning_message: str, org_id: str, query: str
-    ) -> str:
-        """Prepend relevant memories recalled via semantic search to the planning message.
+    def record_feedback(self, run_id: str, approved: bool, notes: str = "") -> None:
+        """Record user approval / rejection of a run output.
 
-        Only injects context when there are high-confidence vector hits (similarity > 0.6)
-        or keyword matches. Silently skips on any error — recall is best-effort.
+        Stores a feedback episode that the planner can use to bias future runs
+        toward specialist combinations that have been approved for similar requests.
         """
+        trace = self._audit.get_run(run_id)
+        if trace is None:
+            raise KeyError(f"run {run_id!r} not found")
+        self._memory.add_episode(
+            trace.org_id,
+            {
+                "type": "feedback",
+                "run_id": run_id,
+                "approved": approved,
+                "notes": notes,
+                "query_type": trace.planner.output_format,
+                "domains": trace.planner.domains_involved,
+                "specialists": trace.selected_agents,
+                "confidence": trace.confidence,
+                "problem_snippet": trace.planner.problem_statement[:200],
+            },
+            run_id=f"feedback_{run_id}",
+        )
+        _log.info(
+            "Feedback recorded for run %s: approved=%s specialists=%s",
+            run_id, approved, trace.selected_agents,
+        )
+
+    def _get_approved_hints(self, episodic: list[dict]) -> list[str]:
+        """Extract approved-pattern hints from episodic memory to bias the planner."""
+        hints: list[str] = []
+        for item in episodic:
+            if not (isinstance(item, dict) and item.get("type") == "feedback" and item.get("approved")):
+                continue
+            specialists = ", ".join(item.get("specialists") or [])
+            qtype = item.get("query_type") or "request"
+            snippet = item.get("problem_snippet") or ""
+            label = f'Approved {qtype} using [{specialists}]'
+            if snippet:
+                label += f' — "{snippet[:100]}"'
+            hints.append(label)
+        return hints[:3]  # cap to avoid prompt bloat
+
+    def _inject_recalled_context(
+        self, planning_message: str, org_id: str, query: str, episodic: list[dict] | None = None
+    ) -> str:
+        """Prepend relevant memories + approved-pattern hints to the planning message.
+
+        Only injects context when there are high-confidence vector hits or
+        approved episodic patterns. Silently skips on any error — recall is best-effort.
+        """
+        parts: list[str] = []
+
+        # 1. Episodic learning hints from approved past runs
+        if episodic:
+            approved_hints = self._get_approved_hints(episodic)
+            if approved_hints:
+                hints_text = "\n".join(f"- {h}" for h in approved_hints)
+                parts.append(f"Prior approved patterns (use these specialist combinations for similar requests):\n{hints_text}")
+
+        # 2. Semantic recall from vector store
         try:
             recalled = self._memory.semantic_recall(org_id=org_id, query=query, top_k=3)
-            if not recalled:
-                return planning_message
-
-            # Filter to meaningful results: drop near-zero keyword-fallback hits
-            useful = [r for r in recalled if r.get("similarity", 1.0) == 0.0 or r.get("similarity", 0) > 0.55]
-            if not useful:
-                return planning_message
-
-            snippets = "\n".join(f"- {r['content_text'][:300]}" for r in useful)
-            context_block = f"\n\n---\nRelevant context recalled from prior sessions:\n{snippets}\n---"
-            _log.debug("Injecting %d recalled memories into planning message", len(useful))
-            return planning_message + context_block
+            if recalled:
+                useful = [r for r in recalled if r.get("similarity", 1.0) == 0.0 or r.get("similarity", 0) > 0.55]
+                if useful:
+                    snippets = "\n".join(f"- {r['content_text'][:300]}" for r in useful)
+                    parts.append(f"Relevant context recalled from prior sessions:\n{snippets}")
+                    _log.debug("Injecting %d recalled memories into planning message", len(useful))
         except Exception as exc:
             _log.debug("semantic_recall injection failed (non-fatal): %s", exc)
+
+        if not parts:
             return planning_message
+        context_block = "\n\n---\n" + "\n\n".join(parts) + "\n---"
+        return planning_message + context_block
 
     def _resolve_planning_message(self, latest_message: str, conversation_history: list[dict]) -> str:
         text = latest_message.strip()

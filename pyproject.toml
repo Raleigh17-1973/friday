@@ -9,6 +9,7 @@ dependencies = [
   "uvicorn>=0.29.0",
   "anthropic>=0.25.0",
   "openai>=1.0.0",
+  "python-multipart>=0.0.9",  # required for POST /upload (file uploads)
 ]
 
 [project.optional-dependencies]
@@ -19,6 +20,12 @@ dependencies = [
 phase3 = [
   "psycopg[binary]>=3.1.0",   # Postgres driver (also used by pgvector path)
   "temporalio>=1.7.0",         # Durable workflow engine (optional; set FRIDAY_WORKFLOW_ENGINE=temporal)
+]
+# Phase 4 multi-modal file extraction:
+#   pip install -e ".[phase4]"
+phase4 = [
+  "pypdf>=4.0.0",              # PDF text extraction for POST /upload
+  "python-docx>=1.1.0",        # DOCX text extraction for POST /upload
 ]
 llm-anthropic = [
   "anthropic>=0.25.0",
