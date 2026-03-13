@@ -151,6 +151,60 @@ def build_plan(message: str, llm: "LLMProvider | None" = None) -> PlannerOutput:
         if "writer_scribe" not in specialists:
             specialists.append("writer_scribe")
 
+    # Data analysis / code interpreter detection
+    _ANALYSIS_KEYWORDS = [
+        "analyze", "analyse", "plot", "chart", "graph", "visualize", "visualise",
+        "csv", "excel file", "spreadsheet data", "run the numbers", "calculate",
+        "correlation", "regression", "distribution", "histogram", "trend",
+        "data analysis", "run python", "write code to", "pandas", "numpy",
+    ]
+    if any(kw in text for kw in _ANALYSIS_KEYWORDS):
+        if "analysis.run" not in tools:
+            tools.append("analysis.run")
+        if "research" not in specialists:
+            specialists.append("research")
+
+    # Financial modeling detection
+    _MODELING_KEYWORDS = [
+        "runway", "burn rate", "dcf", "valuation", "ltv", "cac", "unit economics",
+        "sensitivity", "scenario model", "three case", "three-case", "forecast model",
+        "payback period", "break even", "break-even", "wacc", "terminal value",
+        "headcount model", "hiring plan",
+    ]
+    if any(kw in text for kw in _MODELING_KEYWORDS):
+        if "modeling.scenarios" not in tools:
+            tools.append("modeling.scenarios")
+        if "modeling.runway" not in tools:
+            tools.append("modeling.runway")
+        if "finance" not in specialists:
+            specialists.append("finance")
+
+    # Meeting intelligence detection
+    _MEETING_KEYWORDS = [
+        "meeting notes", "action items", "follow up", "follow-up items",
+        "what was decided", "recap the meeting", "process notes", "meeting summary",
+        "next steps from", "who is responsible for",
+    ]
+    if any(kw in text for kw in _MEETING_KEYWORDS):
+        if "meetings.action_items" not in tools:
+            tools.append("meetings.action_items")
+
+    # Decision log detection
+    _DECISION_KEYWORDS = [
+        "why did we", "past decision", "previously decided", "log this decision",
+        "decision log", "record this", "what did we decide about",
+    ]
+    if any(kw in text for kw in _DECISION_KEYWORDS):
+        if "decisions.context" not in tools:
+            tools.append("decisions.context")
+        if "decisions.search" not in tools:
+            tools.append("decisions.search")
+
+    # Proactive / alerts detection
+    if any(kw in text for kw in ["alerts", "what's at risk", "kpi status", "weekly digest", "digest", "what needs attention"]):
+        if "proactive.alerts" not in tools:
+            tools.append("proactive.alerts")
+
     if not domains:
         domains.append("strategy")
 

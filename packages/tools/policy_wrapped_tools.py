@@ -83,13 +83,147 @@ class ToolExecutor:
         if tool_name.startswith("hubspot."):
             return self._integration_stub(tool_name, args, "HubSpot")
 
+        # Phase N+1: Code interpreter / data analysis
+        if tool_name.startswith("analysis.") or tool_name == "code.run":
+            return self._analysis_tool(tool_name, args)
+
+        # Phase N+2: Meeting intelligence
+        if tool_name.startswith("meetings."):
+            return self._meetings_tool(tool_name, args)
+
+        # Phase N+3: Org context
+        if tool_name.startswith("org."):
+            return self._org_tool(tool_name, args)
+
+        # Phase N+4: Decision log
+        if tool_name.startswith("decisions."):
+            return self._decisions_tool(tool_name, args)
+
+        # Phase N+5: Financial modeling
+        if tool_name.startswith("modeling."):
+            return self._modeling_tool(tool_name, args)
+
+        # Phase N+6: Proactive intelligence
+        if tool_name.startswith("proactive."):
+            return self._proactive_tool(tool_name, args)
+
         return ToolResult(tool_name=tool_name, ok=False, output={}, error="unknown tool")
 
     def _web_research(self, args: dict[str, Any]) -> ToolResult:
+        """Web research with priority: Tavily API → Exa API → DuckDuckGo fallback.
+
+        Set TAVILY_API_KEY or EXA_API_KEY env vars for full search capability.
+        DuckDuckGo instant-answer API is used as a no-key fallback (limited results).
+        """
+        import os
         query = str(args.get("query") or "").strip()
         if not query:
             return ToolResult(tool_name="web.research", ok=False, output={}, error="query is required")
 
+        # --- Tavily (best for research queries) ---
+        tavily_key = os.getenv("TAVILY_API_KEY", "")
+        if tavily_key:
+            try:
+                return self._web_research_tavily(query, tavily_key)
+            except Exception:
+                pass  # fall through
+
+        # --- Exa (semantic search) ---
+        exa_key = os.getenv("EXA_API_KEY", "")
+        if exa_key:
+            try:
+                return self._web_research_exa(query, exa_key)
+            except Exception:
+                pass  # fall through
+
+        # --- DuckDuckGo instant answer (no-key fallback) ---
+        return self._web_research_ddg(query)
+
+    def _web_research_tavily(self, query: str, api_key: str) -> ToolResult:
+        """Call Tavily Search API — returns full page excerpts."""
+        import json as _json
+        from urllib.request import Request
+
+        body = _json.dumps({
+            "api_key": api_key,
+            "query": query,
+            "search_depth": "advanced",
+            "max_results": 6,
+            "include_answer": True,
+        }).encode("utf-8")
+
+        req = Request(
+            "https://api.tavily.com/search",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(req, timeout=10) as resp:  # nosec B310
+            data = _json.loads(resp.read().decode("utf-8"))
+
+        results = [
+            {
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "snippet": r.get("content", "")[:400],
+                "score": r.get("score", 0),
+            }
+            for r in data.get("results", [])
+        ]
+        answer = data.get("answer", "")
+        return ToolResult(
+            tool_name="web.research",
+            ok=True,
+            output={
+                "query": query,
+                "answer": answer,
+                "results": results,
+                "source": "tavily",
+            },
+        )
+
+    def _web_research_exa(self, query: str, api_key: str) -> ToolResult:
+        """Call Exa neural search API."""
+        import json as _json
+        from urllib.request import Request
+
+        body = _json.dumps({
+            "query": query,
+            "numResults": 6,
+            "useAutoprompt": True,
+            "type": "neural",
+            "contents": {"text": {"maxCharacters": 400}},
+        }).encode("utf-8")
+
+        req = Request(
+            "https://api.exa.ai/search",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": api_key,
+            },
+            method="POST",
+        )
+        with urlopen(req, timeout=10) as resp:  # nosec B310
+            data = _json.loads(resp.read().decode("utf-8"))
+
+        results = [
+            {
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "snippet": (r.get("text") or "")[:400],
+                "score": r.get("score", 0),
+            }
+            for r in data.get("results", [])
+        ]
+        return ToolResult(
+            tool_name="web.research",
+            ok=True,
+            output={"query": query, "results": results, "source": "exa"},
+        )
+
+    def _web_research_ddg(self, query: str) -> ToolResult:
+        """DuckDuckGo instant answer API — no key required, limited results."""
         params = urlencode({"q": query, "format": "json", "no_redirect": "1", "no_html": "1"})
         url = f"https://api.duckduckgo.com/?{params}"
 
@@ -106,20 +240,32 @@ class ToolExecutor:
 
         related = data.get("RelatedTopics") or []
         results: list[dict[str, Any]] = []
+        abstract = data.get("AbstractText", "")
+        if abstract:
+            results.append({
+                "title": data.get("Heading", query),
+                "url": data.get("AbstractURL", ""),
+                "snippet": abstract[:400],
+            })
         for item in related:
             if isinstance(item, dict) and item.get("Text") and item.get("FirstURL"):
-                results.append({"title": item["Text"], "url": item["FirstURL"]})
+                results.append({"title": item["Text"][:120], "url": item["FirstURL"], "snippet": item["Text"]})
             elif isinstance(item, dict) and isinstance(item.get("Topics"), list):
                 for topic in item["Topics"]:
                     if topic.get("Text") and topic.get("FirstURL"):
-                        results.append({"title": topic["Text"], "url": topic["FirstURL"]})
-            if len(results) >= 5:
+                        results.append({"title": topic["Text"][:120], "url": topic["FirstURL"], "snippet": topic["Text"]})
+            if len(results) >= 6:
                 break
 
         return ToolResult(
             tool_name="web.research",
             ok=True,
-            output={"query": query, "results": results[:5], "source": "duckduckgo_instant_answer"},
+            output={
+                "query": query,
+                "results": results[:6],
+                "source": "duckduckgo_instant_answer",
+                "note": "Set TAVILY_API_KEY or EXA_API_KEY for full search results",
+            },
         )
 
     def _docs_retrieve(self, args: dict[str, Any]) -> ToolResult:
@@ -484,3 +630,243 @@ class ToolExecutor:
                 "categories": [{"name": c.name, "budget": c.budget_amount, "spent": c.spent} for c in categories]
             })
         return ToolResult(tool_name=tool_name, ok=False, output={}, error="unknown finance sub-tool")
+
+    # ---- Code Interpreter / Data Analysis ----
+
+    def _analysis_tool(self, tool_name: str, args: dict[str, Any]) -> ToolResult:
+        try:
+            from packages.interpreter import CodeInterpreterService
+        except ImportError as exc:
+            return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        svc = CodeInterpreterService(timeout=30)
+
+        if tool_name in ("analysis.run", "code.run"):
+            code = str(args.get("code") or "")
+            if not code:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error="code is required")
+            data_files = dict(args.get("data_files") or {})
+            result = svc.run(code, data_files=data_files, org_id=str(args.get("org_id", "org-1")))
+            return ToolResult(tool_name=tool_name, ok=result["ok"], output=result, error=result.get("error"))
+
+        if tool_name == "analysis.file":
+            file_path = str(args.get("file_path") or "")
+            question = str(args.get("question") or "Summarize this data")
+            if not file_path:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error="file_path is required")
+            result = svc.analyze_file(file_path, question, org_id=str(args.get("org_id", "org-1")))
+            return ToolResult(tool_name=tool_name, ok=result["ok"], output=result, error=result.get("error"))
+
+        return ToolResult(tool_name=tool_name, ok=False, output={}, error="unknown analysis sub-tool")
+
+    # ---- Meeting Intelligence ----
+
+    def _meetings_tool(self, tool_name: str, args: dict[str, Any]) -> ToolResult:
+        try:
+            from packages.meetings import MeetingService
+        except ImportError as exc:
+            return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        db_path = self._repo_root / "data" / "meetings.db"
+        svc = MeetingService(db_path=db_path)
+        org_id = str(args.get("org_id", "org-1"))
+
+        if tool_name == "meetings.create":
+            meeting = svc.create_meeting(
+                title=str(args.get("title", "Meeting")),
+                scheduled_at=str(args.get("scheduled_at", "")),
+                attendees=list(args.get("attendees") or []),
+                agenda=list(args.get("agenda") or []),
+                duration_minutes=int(args.get("duration_minutes", 60)),
+                org_id=org_id,
+            )
+            return ToolResult(tool_name=tool_name, ok=True, output={"meeting_id": meeting.meeting_id, "title": meeting.title})
+        if tool_name == "meetings.process_notes":
+            note = svc.process_notes(
+                meeting_id=str(args.get("meeting_id", "")),
+                raw_text=str(args.get("notes", "")),
+                org_id=org_id,
+            )
+            return ToolResult(tool_name=tool_name, ok=True, output={
+                "note_id": note.note_id,
+                "action_items": [{"description": a.description, "owner": a.owner} for a in note.action_items],
+                "decisions": note.decisions_made,
+                "summary": note.structured_summary,
+            })
+        if tool_name == "meetings.action_items":
+            items = svc.list_action_items(org_id=org_id, status=str(args.get("status", "open")))
+            return ToolResult(tool_name=tool_name, ok=True, output={
+                "action_items": [{"id": i.item_id, "description": i.description, "owner": i.owner, "due": i.due_date} for i in items]
+            })
+        if tool_name == "meetings.list":
+            meetings = svc.list_meetings(org_id=org_id, status=args.get("status"))
+            return ToolResult(tool_name=tool_name, ok=True, output={
+                "meetings": [{"id": m.meeting_id, "title": m.title, "at": m.scheduled_at, "status": m.status} for m in meetings]
+            })
+        return ToolResult(tool_name=tool_name, ok=False, output={}, error="unknown meetings sub-tool")
+
+    # ---- Org Context ----
+
+    def _org_tool(self, tool_name: str, args: dict[str, Any]) -> ToolResult:
+        try:
+            from packages.org_context import OrgContextService
+        except ImportError as exc:
+            return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        db_path = self._repo_root / "data" / "org_context.db"
+        svc = OrgContextService(db_path=db_path)
+        org_id = str(args.get("org_id", "org-1"))
+
+        if tool_name == "org.context":
+            summary = svc.build_context_summary(org_id)
+            return ToolResult(tool_name=tool_name, ok=True, output={"context": summary})
+        if tool_name == "org.people":
+            people = svc.list_people(org_id, department=args.get("department"))
+            return ToolResult(tool_name=tool_name, ok=True, output={
+                "people": [{"name": p.name, "role": p.role, "department": p.department} for p in people]
+            })
+        if tool_name == "org.priorities":
+            priorities = svc.list_priorities(org_id)
+            return ToolResult(tool_name=tool_name, ok=True, output={
+                "priorities": [{"title": p.title, "owner": p.owner, "due": p.due_date, "status": p.status} for p in priorities]
+            })
+        if tool_name == "org.chart":
+            chart = svc.org_chart(org_id)
+            return ToolResult(tool_name=tool_name, ok=True, output={"org_chart": chart})
+        return ToolResult(tool_name=tool_name, ok=False, output={}, error="unknown org sub-tool")
+
+    # ---- Decision Log ----
+
+    def _decisions_tool(self, tool_name: str, args: dict[str, Any]) -> ToolResult:
+        try:
+            from packages.decisions import DecisionLogService
+        except ImportError as exc:
+            return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        db_path = self._repo_root / "data" / "decisions.db"
+        svc = DecisionLogService(db_path=db_path)
+        org_id = str(args.get("org_id", "org-1"))
+
+        if tool_name == "decisions.log":
+            decision = svc.log(
+                title=str(args.get("title", "")),
+                context=str(args.get("context", "")),
+                rationale=str(args.get("rationale", "")),
+                owner=str(args.get("owner", "")),
+                options_considered=list(args.get("options_considered") or []),
+                org_id=org_id,
+                tags=list(args.get("tags") or []),
+                reversibility=str(args.get("reversibility", "reversible")),
+                confidence=float(args.get("confidence", 0.8)),
+                related_run_id=str(args.get("related_run_id", "")),
+            )
+            return ToolResult(tool_name=tool_name, ok=True, output={"decision_id": decision.decision_id})
+        if tool_name == "decisions.search":
+            decisions = svc.search(str(args.get("query", "")), org_id)
+            return ToolResult(tool_name=tool_name, ok=True, output={
+                "decisions": [{"id": d.decision_id, "title": d.title, "rationale": d.rationale[:200], "made_at": d.made_at} for d in decisions]
+            })
+        if tool_name == "decisions.list":
+            decisions = svc.list_decisions(org_id, tag=args.get("tag"))
+            return ToolResult(tool_name=tool_name, ok=True, output={
+                "decisions": [{"id": d.decision_id, "title": d.title, "owner": d.owner, "made_at": d.made_at} for d in decisions]
+            })
+        if tool_name == "decisions.context":
+            ctx = svc.context_for_query(str(args.get("query", "")), org_id)
+            return ToolResult(tool_name=tool_name, ok=True, output={"context": ctx})
+        return ToolResult(tool_name=tool_name, ok=False, output={}, error="unknown decisions sub-tool")
+
+    # ---- Financial Modeling ----
+
+    def _modeling_tool(self, tool_name: str, args: dict[str, Any]) -> ToolResult:
+        try:
+            from packages.finance.modeling import FinancialModelingService
+        except ImportError as exc:
+            return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        svc = FinancialModelingService()
+
+        if tool_name == "modeling.scenarios":
+            scenarios = svc.three_case_model(
+                base_revenue=float(args.get("base_revenue", 0)),
+                base_costs=float(args.get("base_costs", 0)),
+                optimistic_growth_pct=float(args.get("optimistic_growth_pct", 0.30)),
+                pessimistic_growth_pct=float(args.get("pessimistic_growth_pct", -0.15)),
+            )
+            ev = svc.expected_value(scenarios)
+            from dataclasses import asdict
+            return ToolResult(tool_name=tool_name, ok=True, output={
+                "scenarios": [asdict(s) for s in scenarios],
+                "expected_value": ev,
+            })
+        if tool_name == "modeling.runway":
+            result = svc.runway(
+                cash_on_hand=float(args.get("cash_on_hand", 0)),
+                monthly_burn=float(args.get("monthly_burn", 0)),
+                current_mrr=float(args.get("current_mrr", 0)),
+                mrr_growth_rate=float(args.get("mrr_growth_rate", 0.08)),
+            )
+            from dataclasses import asdict
+            return ToolResult(tool_name=tool_name, ok=True, output=asdict(result))
+        if tool_name == "modeling.dcf":
+            result = svc.dcf(
+                annual_cash_flows=list(args.get("annual_cash_flows") or []),
+                terminal_growth_rate=float(args.get("terminal_growth_rate", 0.03)),
+                wacc=float(args.get("wacc", 0.12)),
+                net_debt=float(args.get("net_debt", 0)),
+            )
+            from dataclasses import asdict
+            return ToolResult(tool_name=tool_name, ok=True, output=asdict(result))
+        if tool_name == "modeling.unit_economics":
+            result = svc.unit_economics(
+                arpu=float(args.get("arpu", 0)),
+                cac=float(args.get("cac", 0)),
+                churn_rate=float(args.get("churn_rate", 0.02)),
+                gross_margin=float(args.get("gross_margin", 0.70)),
+            )
+            return ToolResult(tool_name=tool_name, ok=True, output=result)
+        if tool_name == "modeling.sensitivity":
+            result = svc.sensitivity_table(
+                base_revenue=float(args.get("base_revenue", 0)),
+                base_margin=float(args.get("base_margin", 0.20)),
+            )
+            return ToolResult(tool_name=tool_name, ok=True, output=result)
+        return ToolResult(tool_name=tool_name, ok=False, output={}, error="unknown modeling sub-tool")
+
+    # ---- Proactive Intelligence ----
+
+    def _proactive_tool(self, tool_name: str, args: dict[str, Any]) -> ToolResult:
+        try:
+            from packages.proactive import ProactiveScanner, DigestService
+        except ImportError as exc:
+            return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        db_path = self._repo_root / "data" / "proactive.db"
+        scanner = ProactiveScanner(db_path=db_path)
+        org_id = str(args.get("org_id", "org-1"))
+
+        if tool_name == "proactive.alerts":
+            alerts = scanner.list_alerts(org_id=org_id, severity=args.get("severity"))
+            return ToolResult(tool_name=tool_name, ok=True, output={
+                "alerts": [{"id": a.alert_id, "severity": a.severity.value, "title": a.title, "body": a.body, "category": a.category} for a in alerts]
+            })
+        if tool_name == "proactive.scan_kpis":
+            kpis = list(args.get("kpis") or [])
+            alerts = scanner.scan_kpis(kpis)
+            return ToolResult(tool_name=tool_name, ok=True, output={"alerts_generated": len(alerts)})
+        if tool_name == "proactive.scan_budget":
+            categories = list(args.get("categories") or [])
+            alerts = scanner.scan_budget(categories)
+            return ToolResult(tool_name=tool_name, ok=True, output={"alerts_generated": len(alerts)})
+        if tool_name == "proactive.digest":
+            digest_svc = DigestService()
+            digest = digest_svc.generate_weekly(
+                kpis=list(args.get("kpis") or []),
+                objectives=list(args.get("objectives") or []),
+                alerts=[a.__dict__ for a in scanner.list_alerts(org_id)],
+                decisions=list(args.get("decisions") or []),
+                org_id=org_id,
+            )
+            md = digest_svc.digest_to_markdown(digest)
+            return ToolResult(tool_name=tool_name, ok=True, output={"digest": md, "digest_id": digest.digest_id})
+        return ToolResult(tool_name=tool_name, ok=False, output={}, error="unknown proactive sub-tool")

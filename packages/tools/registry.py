@@ -167,6 +167,122 @@ class ToolRegistry:
                 scopes=["crm.read"], enabled=True,
                 meta={"description": "Get HubSpot deals"},
             ),
+            # ---- Code Interpreter / Data Analysis ----
+            "analysis.run": ToolDefinition(
+                tool_id="analysis.run", source="function", mode="read_only",
+                scopes=["analysis.execute"], enabled=True,
+                meta={"description": "Run Python code for data analysis — returns stdout, DataFrames, and charts"},
+            ),
+            "analysis.file": ToolDefinition(
+                tool_id="analysis.file", source="function", mode="read_only",
+                scopes=["analysis.execute"], enabled=True,
+                meta={"description": "Run exploratory analysis on an uploaded CSV/Excel/JSON file"},
+            ),
+            # ---- Meeting Intelligence ----
+            "meetings.create": ToolDefinition(
+                tool_id="meetings.create", source="function", mode="write",
+                scopes=["meetings.write"], enabled=True,
+                meta={"description": "Create a meeting record with agenda and attendees"},
+            ),
+            "meetings.process_notes": ToolDefinition(
+                tool_id="meetings.process_notes", source="function", mode="write",
+                scopes=["meetings.write"], enabled=True,
+                meta={"description": "Process raw meeting notes into structured summary + action items"},
+            ),
+            "meetings.action_items": ToolDefinition(
+                tool_id="meetings.action_items", source="function", mode="read_only",
+                scopes=["meetings.read"], enabled=True,
+                meta={"description": "List open action items from meetings"},
+            ),
+            "meetings.list": ToolDefinition(
+                tool_id="meetings.list", source="function", mode="read_only",
+                scopes=["meetings.read"], enabled=True,
+                meta={"description": "List scheduled and completed meetings"},
+            ),
+            # ---- Org Context ----
+            "org.context": ToolDefinition(
+                tool_id="org.context", source="function", mode="read_only",
+                scopes=["org.read"], enabled=True,
+                meta={"description": "Get organizational context summary — company profile, key people, strategic priorities"},
+            ),
+            "org.people": ToolDefinition(
+                tool_id="org.people", source="function", mode="read_only",
+                scopes=["org.read"], enabled=True,
+                meta={"description": "List team members and their roles"},
+            ),
+            "org.priorities": ToolDefinition(
+                tool_id="org.priorities", source="function", mode="read_only",
+                scopes=["org.read"], enabled=True,
+                meta={"description": "List active strategic priorities"},
+            ),
+            "org.chart": ToolDefinition(
+                tool_id="org.chart", source="function", mode="read_only",
+                scopes=["org.read"], enabled=True,
+                meta={"description": "Get org chart hierarchy"},
+            ),
+            # ---- Decision Log ----
+            "decisions.log": ToolDefinition(
+                tool_id="decisions.log", source="function", mode="write",
+                scopes=["decisions.write"], enabled=True,
+                meta={"description": "Log a significant decision with context, options, and rationale"},
+            ),
+            "decisions.search": ToolDefinition(
+                tool_id="decisions.search", source="function", mode="read_only",
+                scopes=["decisions.read"], enabled=True,
+                meta={"description": "Search past decisions by keyword"},
+            ),
+            "decisions.list": ToolDefinition(
+                tool_id="decisions.list", source="function", mode="read_only",
+                scopes=["decisions.read"], enabled=True,
+                meta={"description": "List all logged decisions"},
+            ),
+            "decisions.context": ToolDefinition(
+                tool_id="decisions.context", source="function", mode="read_only",
+                scopes=["decisions.read"], enabled=True,
+                meta={"description": "Get relevant past decisions as context for a query"},
+            ),
+            # ---- Financial Modeling ----
+            "modeling.scenarios": ToolDefinition(
+                tool_id="modeling.scenarios", source="function", mode="read_only",
+                scopes=["analysis.read"], enabled=True,
+                meta={"description": "Generate optimistic/base/pessimistic revenue scenarios with expected value"},
+            ),
+            "modeling.runway": ToolDefinition(
+                tool_id="modeling.runway", source="function", mode="read_only",
+                scopes=["analysis.read"], enabled=True,
+                meta={"description": "Calculate startup runway with MRR growth factored in"},
+            ),
+            "modeling.dcf": ToolDefinition(
+                tool_id="modeling.dcf", source="function", mode="read_only",
+                scopes=["analysis.read"], enabled=True,
+                meta={"description": "Discounted cash flow valuation (DCF) with terminal value"},
+            ),
+            "modeling.unit_economics": ToolDefinition(
+                tool_id="modeling.unit_economics", source="function", mode="read_only",
+                scopes=["analysis.read"], enabled=True,
+                meta={"description": "Calculate LTV, CAC, LTV:CAC ratio, and payback period"},
+            ),
+            "modeling.sensitivity": ToolDefinition(
+                tool_id="modeling.sensitivity", source="function", mode="read_only",
+                scopes=["analysis.read"], enabled=True,
+                meta={"description": "Generate sensitivity table varying revenue and margin"},
+            ),
+            # ---- Proactive Intelligence ----
+            "proactive.alerts": ToolDefinition(
+                tool_id="proactive.alerts", source="function", mode="read_only",
+                scopes=["proactive.read"], enabled=True,
+                meta={"description": "List active alerts for KPI drift, OKR risk, or budget overspend"},
+            ),
+            "proactive.scan_kpis": ToolDefinition(
+                tool_id="proactive.scan_kpis", source="function", mode="read_only",
+                scopes=["proactive.read"], enabled=True,
+                meta={"description": "Scan KPIs for threshold breaches and generate alerts"},
+            ),
+            "proactive.digest": ToolDefinition(
+                tool_id="proactive.digest", source="function", mode="read_only",
+                scopes=["proactive.read"], enabled=True,
+                meta={"description": "Generate weekly operational digest with KPI summary, OKR status, alerts, and wins"},
+            ),
         }
 
     def list_tools(self) -> list[dict[str, Any]]:
