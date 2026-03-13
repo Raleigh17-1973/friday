@@ -96,7 +96,11 @@ export async function POST(req: NextRequest) {
             controller.enqueue(enc.encode(sseEvent("response.output_text.delta", { text: `${token} ` })));
           }
 
-          controller.enqueue(enc.encode(sseEvent("response.completed", { at: new Date().toISOString() })));
+          const completedPayload: Record<string, unknown> = { at: new Date().toISOString() };
+          if (data?.generated_document) {
+            completedPayload.generated_document = data.generated_document;
+          }
+          controller.enqueue(enc.encode(sseEvent("response.completed", completedPayload)));
         } catch (fallbackErr) {
           controller.enqueue(
             enc.encode(

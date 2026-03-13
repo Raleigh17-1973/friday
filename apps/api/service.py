@@ -151,10 +151,134 @@ class FridayService:
         trace = self.audit.get_run(response["run_id"])
         if trace is not None:
             response["reflection"] = self.reflection.reflect(trace, self.memory).to_dict()
+
+        # Doc generation hook — if output_format is full_deliverable and a file format
+        # was requested in the message, auto-generate and attach the document.
+        self._maybe_generate_document(request.message, request.org_id, response)
+
         # Ensure top-level "response" key for backward compatibility with static UI
         if "response" not in response:
             response["response"] = (response.get("final_answer") or {}).get("direct_answer", "")
         return response
+
+    # ------------------------------------------------------------------
+    # Document generation helpers
+    # ------------------------------------------------------------------
+
+    _FORMAT_KEYWORDS: dict[str, list[str]] = {
+        "docx": ["word doc", "word document", ".docx", "microsoft word", "word file"],
+        "pptx": ["powerpoint", "pptx", "slide deck", "slides", "presentation", "deck"],
+        "xlsx": ["excel", "spreadsheet", "xlsx", ".xls", "worksheet"],
+        "pdf":  ["pdf", "portable document"],
+    }
+
+    def _detect_format(self, message: str) -> str | None:
+        """Return the first matching file format keyword found in the message, or None."""
+        lower = message.lower()
+        for fmt, keywords in self._FORMAT_KEYWORDS.items():
+            if any(kw in lower for kw in keywords):
+                return fmt
+        return None
+
+    def _maybe_generate_document(self, message: str, org_id: str, response: dict) -> None:
+        """If the request is a full_deliverable and a file format was detected, generate the file."""
+        if self.docgen is None:
+            return
+        planner = response.get("planner") or {}
+        if planner.get("output_format") != "full_deliverable":
+            return
+        fmt = self._detect_format(message)
+        if not fmt:
+            return
+
+        final_answer = response.get("final_answer") or {}
+        content_text = final_answer.get("direct_answer", "")
+        if not content_text:
+            return
+
+        # Already generated (e.g. from a previous retry)
+        if final_answer.get("artifacts", {}).get("document"):
+            return
+
+        try:
+            from packages.docgen.generators.base import DocumentContent, DocumentSection
+            import re as _re
+
+            # Parse markdown ## headings into sections
+            raw_sections = _re.split(r"^## ", content_text, flags=_re.MULTILINE)
+            sections: list[DocumentSection] = []
+            title = (planner.get("problem_statement") or "Document")[:80]
+
+            for chunk in raw_sections:
+                if not chunk.strip():
+                    continue
+                lines = chunk.split("\n", 1)
+                heading = lines[0].strip()
+                body = lines[1].strip() if len(lines) > 1 else ""
+
+                # Detect simple markdown tables
+                table: list[list[str]] | None = None
+                table_lines = [l for l in body.splitlines() if l.strip().startswith("|")]
+                if table_lines:
+                    rows = []
+                    for tl in table_lines:
+                        if _re.match(r"^\|[-|\s]+\|$", tl.strip()):
+                            continue  # skip separator rows
+                        cells = [c.strip() for c in tl.strip().strip("|").split("|")]
+                        rows.append(cells)
+                    if rows:
+                        table = rows
+
+                # Slide notes extraction (--- NOTES: ...)
+                notes = ""
+                notes_match = _re.search(r"---\s*NOTES:\s*(.+)", body, _re.IGNORECASE | _re.DOTALL)
+                if notes_match:
+                    notes = notes_match.group(1).strip()
+                    body = body[: notes_match.start()].strip()
+
+                # Use first heading as document title if not set yet
+                if not sections:
+                    title = heading
+
+                sections.append(DocumentSection(
+                    heading=heading,
+                    body=body,
+                    level=1,
+                    table=table,
+                    slide_notes=notes,
+                ))
+
+            if not sections:
+                sections = [DocumentSection(heading="Document", body=content_text, level=1)]
+
+            doc_type = {
+                "docx": "report",
+                "pptx": "deck",
+                "xlsx": "spreadsheet",
+                "pdf": "report",
+            }.get(fmt, "report")
+
+            content = DocumentContent(
+                title=title,
+                document_type=doc_type,
+                sections=sections,
+                metadata={"org_id": org_id, "generated_by": "friday"},
+            )
+            stored = self.docgen.generate(content, format=fmt, org_id=org_id)
+
+            # Attach to final_answer.artifacts
+            final_answer.setdefault("artifacts", {})["document"] = stored.file_id
+            response["generated_document"] = {
+                "file_id": stored.file_id,
+                "filename": stored.filename,
+                "mime_type": stored.mime_type,
+                "size_bytes": stored.size_bytes,
+                "format": fmt,
+                "download_url": f"/files/{stored.file_id}",
+            }
+        except Exception as exc:  # never crash the main response
+            import logging
+            logging.getLogger(__name__).warning("Doc generation failed: %s", exc)
 
     def get_dashboard_metrics(self) -> dict:
         agents = self.registry.list_active()

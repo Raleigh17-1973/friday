@@ -217,8 +217,22 @@ def chat_stream(payload: ChatPayload):
     )
 
     def _event_generator():
+        full_text_parts: list[str] = []
         for evt in service.manager.run_streaming(request):
             event_type = evt.get("event", "message")
+            if event_type == "token":
+                full_text_parts.append(evt.get("text", ""))
+            if event_type == "done":
+                # Attempt doc generation if this was a full_deliverable request
+                if evt.get("output_format") == "full_deliverable" and service.docgen is not None:
+                    full_text = "".join(full_text_parts)
+                    response_stub = {
+                        "planner": {"output_format": "full_deliverable", "problem_statement": message},
+                        "final_answer": {"direct_answer": full_text, "artifacts": {}},
+                    }
+                    service._maybe_generate_document(message, payload.org_id, response_stub)
+                    if response_stub.get("generated_document"):
+                        evt = {**evt, "generated_document": response_stub["generated_document"]}
             yield f"event: {event_type}\ndata: {_json.dumps(evt)}\n\n"
 
     return StreamingResponse(

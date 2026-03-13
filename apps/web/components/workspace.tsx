@@ -14,6 +14,12 @@ const MermaidDiagram = dynamic(
   { ssr: false, loading: () => <div className="mermaid-loading">Rendering diagram…</div> }
 );
 
+// DocumentCard — lazy-loaded so it doesn't bloat the initial bundle
+const DocumentCard = dynamic(
+  () => import("@/components/document-card").then((m) => m.DocumentCard),
+  { ssr: false }
+);
+
 // ── Mermaid fence parser ───────────────────────────────────────────────────
 // Splits a message string into alternating text / mermaid segments.
 type TextSegment   = { kind: "text"; content: string };
@@ -70,6 +76,10 @@ function LeftRail({
     <aside className="left-rail" aria-label="Threads and saved context">
       <header className="rail-header">Friday</header>
       <a href="/processes" className="processes-nav-link">📋 Process Library</a>
+      <a href="/documents" className="processes-nav-link">📄 Documents</a>
+      <a href="/analytics" className="processes-nav-link">📊 Analytics</a>
+      <a href="/okrs" className="processes-nav-link">🎯 OKRs</a>
+      <a href="/settings" className="processes-nav-link">⚙️ Settings</a>
       <button className="new-chat" onClick={onCreate}>
         + New chat
       </button>
@@ -122,6 +132,10 @@ function LeftRail({
 function MessageRow({ message }: { message: FridayMessage }) {
   const isFriday = message.role === "friday";
   const segments = isFriday ? parseSegments(message.text) : null;
+  const genDoc = message.meta?.generated_document as {
+    file_id: string; filename: string; mime_type: string;
+    size_bytes: number; format: string; download_url: string;
+  } | undefined;
 
   return (
     <article className={`msg msg-${message.role}`}>
@@ -135,6 +149,16 @@ function MessageRow({ message }: { message: FridayMessage }) {
         )
       ) : (
         <p>{message.text}</p>
+      )}
+      {genDoc && (
+        <DocumentCard
+          fileId={genDoc.file_id}
+          filename={genDoc.filename}
+          mimeType={genDoc.mime_type}
+          sizeBytes={genDoc.size_bytes}
+          format={genDoc.format}
+          downloadUrl={genDoc.download_url}
+        />
       )}
       <time dateTime={message.timestamp}>{new Date(message.timestamp).toLocaleTimeString()}</time>
     </article>

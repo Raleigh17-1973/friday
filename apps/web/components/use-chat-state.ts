@@ -233,6 +233,14 @@ export function useChatState() {
             text?: string;
             label?: string;
             message?: string;
+            generated_document?: {
+              file_id: string;
+              filename: string;
+              mime_type: string;
+              size_bytes: number;
+              format: string;
+              download_url: string;
+            };
           };
 
           if (eventName === "response.in_progress") {
@@ -241,6 +249,15 @@ export function useChatState() {
           if (eventName === "response.output_text.delta" && data.text) {
             updateThreadMessages(threadId, (prev) =>
               prev.map((msg) => (msg.id === runMsgId ? { ...msg, text: `${msg.text}${data.text}` } : msg))
+            );
+          }
+          if (eventName === "response.completed" && data.generated_document) {
+            updateThreadMessages(threadId, (prev) =>
+              prev.map((msg) =>
+                msg.id === runMsgId
+                  ? { ...msg, meta: { ...msg.meta, generated_document: data.generated_document } }
+                  : msg
+              )
             );
           }
           if (eventName === "response.failed") {

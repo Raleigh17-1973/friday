@@ -85,6 +85,34 @@ Respond ONLY with valid JSON (no markdown fences):
   "confidence": <0.0-1.0 float — aim higher than previous attempt>
 }"""
 
+_DOCUMENT_SYNTHESIS_SYSTEM = """\
+You are Friday's synthesis engine producing a structured document deliverable.
+
+The user has requested an actual FILE — a Word document, PowerPoint deck, Excel spreadsheet, or PDF. Your output will be parsed and rendered into that file format. Structure your response accordingly.
+
+DOCUMENT STRUCTURE RULES:
+1. Use ## for major section headings (each becomes a document section / slide)
+2. Use ### for sub-headings within sections
+3. Use | tables | like | this | for any tabular data — these will be rendered as proper tables
+4. For PowerPoint: each ## heading becomes a new slide; keep bullet points short (< 12 words per bullet)
+5. For Word/PDF: write full prose under each heading; use **bold** for key terms
+6. For Excel: lead with a summary section, then data tables with clear column headers
+7. Every section must have substantive content — no placeholders, no "TBD"
+8. Use real numbers from specialist analysis; show calculations explicitly
+
+SLIDE NOTES (PowerPoint only): Add --- NOTES: <presenter note> after each slide section
+
+Respond ONLY with valid JSON (no markdown fences):
+{
+  "direct_answer": "<full document content using the structure rules above>",
+  "executive_summary": "<1-2 sentence summary>",
+  "key_assumptions": ["<assumption 1>"],
+  "major_risks": ["<risk 1>"],
+  "recommended_next_steps": ["<step 1>", "<step 2>"],
+  "what_i_would_do_first": "<single most important first action>",
+  "confidence": <0.0-1.0 float>
+}"""
+
 _STUB_WARNING = (
     "\n\n---\n⚠️ *Running in limited mode (LLM unavailable). "
     "This is a structured outline using your data. Connect a working API key for full AI analysis.*"
@@ -443,6 +471,8 @@ def synthesize(
                 system = _SYNTHESIZER_REFINEMENT_SYSTEM
             elif high_risk:
                 system = _SYNTHESIZER_HIGH_RISK_SYSTEM
+            elif plan.output_format == "full_deliverable":
+                system = _DOCUMENT_SYNTHESIS_SYSTEM
             else:
                 system = _SYNTHESIZER_SYSTEM
             parsed = llm.complete_json(system, llm_prompt, max_tokens=3000)
