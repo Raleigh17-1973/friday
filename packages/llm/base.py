@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from abc import ABC, abstractmethod
+from typing import Iterator
 
 
 class LLMProvider(ABC):
@@ -10,7 +11,15 @@ class LLMProvider(ABC):
 
     @abstractmethod
     def complete(self, system: str, prompt: str, **kwargs) -> str:
-        """Send a system + user prompt and return the text response."""
+        """Send a system + user prompt and return the full text response."""
+
+    def stream(self, system: str, prompt: str, **kwargs) -> Iterator[str]:
+        """
+        Send a system + user prompt and yield response tokens as they arrive.
+        Default: runs complete() and yields the whole string as one chunk.
+        Providers should override for true streaming.
+        """
+        yield self.complete(system, prompt, **kwargs)
 
     def complete_json(self, system: str, prompt: str, **kwargs) -> dict:
         """Send a prompt expecting JSON back. Returns parsed dict or empty dict on failure."""

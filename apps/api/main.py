@@ -22,7 +22,7 @@ from apps.api.security import AdminAuth, RateLimiter
 try:
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import JSONResponse, FileResponse
+    from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
 except ModuleNotFoundError as exc:  # pragma: no cover
@@ -108,6 +108,43 @@ def chat(payload: ChatPayload) -> dict:
         return service.execute_chat_payload(payload.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/chat/stream")
+def chat_stream(payload: ChatPayload):
+    """Server-sent events endpoint that streams synthesis tokens as they arrive from the LLM.
+
+    SSE event types:
+      event: status  — pipeline stage label
+      event: token   — one synthesis token chunk
+      event: done    — final metadata JSON
+      event: error   — error message
+    """
+    import json as _json
+    from packages.common.models import ChatRequest
+
+    message = payload.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    request = ChatRequest(
+        user_id=payload.user_id,
+        org_id=payload.org_id,
+        conversation_id=payload.conversation_id,
+        message=message,
+        context_packet=payload.context_packet,
+    )
+
+    def _event_generator():
+        for evt in service.manager.run_streaming(request):
+            event_type = evt.get("event", "message")
+            yield f"event: {event_type}\ndata: {_json.dumps(evt)}\n\n"
+
+    return StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/runs")

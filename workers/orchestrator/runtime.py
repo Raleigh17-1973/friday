@@ -4,7 +4,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterator
 from uuid import uuid4
 
 _log = logging.getLogger(__name__)
@@ -31,9 +31,10 @@ from packages.governance.audit import AuditLog
 from packages.governance.policy import PolicyEngine
 from packages.memory.service import LayeredMemoryService
 from packages.tools.policy_wrapped_tools import ToolExecutor
+from packages.observability.logger import finalize_run as _obs_finalize
 from workers.orchestrator.critic import run_critic
 from workers.orchestrator.planner import build_plan
-from workers.orchestrator.synthesizer import synthesize
+from workers.orchestrator.synthesizer import synthesize, synthesize_stream
 
 if TYPE_CHECKING:
     from packages.llm.base import LLMProvider
@@ -173,6 +174,7 @@ class FridayManager:
         for candidate in candidates:
             self._memory.add_candidate(asdict(candidate), request.org_id)
 
+        run_cost = _obs_finalize(run_id)
         return {
             "run_id": run_id,
             "final_answer": asdict(final_answer),
@@ -186,7 +188,90 @@ class FridayManager:
                 "conversation_events": len(memory_bundle.conversation),
                 "episodic_items": len(memory_bundle.episodic),
             },
+            "observability": run_cost,
         }
+
+    def run_streaming(self, request: "ChatRequest") -> Iterator[dict]:
+        """Run the full pipeline and yield SSE-ready event dicts.
+
+        Events:
+          {"event": "status",  "label": str}           — pipeline progress
+          {"event": "token",   "text": str}             — synthesis token
+          {"event": "done",    "run_id": str, ...}      — structured metadata
+          {"event": "error",   "message": str}          — on failure
+        """
+        from packages.common.models import ChatRequest  # local to avoid circular
+
+        run_id = f"run_{uuid4().hex[:12]}"
+        try:
+            yield {"event": "status", "label": "Loading context"}
+            memory_bundle = self._memory.load(
+                org_id=request.org_id,
+                conversation_id=request.conversation_id,
+                working={"user_message": request.message, "context_packet": request.context_packet},
+            )
+            planning_message = self._resolve_planning_message(request.message, memory_bundle.conversation)
+
+            yield {"event": "status", "label": "Planning your request"}
+            plan = build_plan(planning_message, llm=self._llm)
+
+            specialists = []
+            for specialist_id in plan.recommended_specialists:
+                s = self._registry.build_specialist(specialist_id)
+                s.llm = self._llm
+                specialists.append(s)
+
+            n = len(specialists)
+            label = f"Consulting {n} specialist{'s' if n != 1 else ''}" if n else "Analyzing"
+            yield {"event": "status", "label": label}
+            memos = self._run_specialists_parallel(specialists, plan, request.message)
+
+            yield {"event": "status", "label": "Quality review"}
+            critic_report = run_critic(memos, llm=self._llm)
+
+            yield {"event": "status", "label": "Synthesizing response"}
+            full_text_parts: list[str] = []
+            for token in synthesize_stream(plan, memos, critic_report, llm=self._llm):
+                full_text_parts.append(token)
+                yield {"event": "token", "text": token}
+
+            full_text = "".join(full_text_parts)
+
+            # Build a lightweight FinalAnswerPackage from streamed text for audit/memory
+            from packages.common.models import FinalAnswerPackage
+            experts = [m.specialist_id for m in memos]
+            final_answer = FinalAnswerPackage(
+                direct_answer=full_text,
+                executive_summary="",
+                key_assumptions=[],
+                major_risks=[],
+                recommended_next_steps=[],
+                what_i_would_do_first=None,
+                experts_consulted=experts,
+                confidence=0.85 if self._llm else 0.55,
+            )
+
+            self._memory.append_conversation(
+                request.conversation_id,
+                {"run_id": run_id, "user": request.message, "final_answer": asdict(final_answer), "selected_agents": experts},
+            )
+            self._memory.add_episode(
+                request.org_id,
+                {"run_id": run_id, "problem": plan.problem_statement, "experts": experts, "outcome": {}},
+                run_id=run_id,
+            )
+
+            yield {
+                "event": "done",
+                "run_id": run_id,
+                "selected_agents": experts,
+                "output_format": plan.output_format,
+                "domains": plan.domains_involved,
+                "llm_active": self._llm is not None,
+            }
+        except Exception as exc:
+            _log.exception("Streaming run %s failed: %s", run_id, exc)
+            yield {"event": "error", "message": str(exc)}
 
     def _run_specialists_parallel(self, specialists, plan, user_message: str) -> list:
         """Run all specialists concurrently. Falls back to sequential on error."""

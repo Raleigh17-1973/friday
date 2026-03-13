@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterator
 
 from packages.common.models import CriticReport, FinalAnswerPackage, PlannerOutput, SpecialistMemo
 
@@ -26,6 +26,14 @@ Respond ONLY with valid JSON (no markdown fences):
   "what_i_would_do_first": "<single most important first action>",
   "confidence": <0.0-1.0 float>
 }"""
+
+_SYNTHESIZER_STREAM_SYSTEM = """\
+You are Friday's synthesis engine producing a live-streamed response for the user.
+
+Write a complete, specific, professional response to the user's request — the actual deliverable, not advice about how to create it. Use narrative prose with clear markdown headers. If numbers were provided, compute with them and show your math. If a document was requested, write the full document.
+
+Do NOT wrap your response in JSON. Write directly — the user will read your tokens as they stream in.
+Be crisp, expert, and complete."""
 
 _SYNTHESIZER_REFINEMENT_SYSTEM = """\
 You are Friday's synthesis engine performing a REFINEMENT PASS. A previous synthesis attempt had low confidence.
@@ -449,3 +457,44 @@ def synthesize(
         experts_consulted=experts,
         confidence=0.72,
     )
+
+
+def synthesize_stream(
+    plan: PlannerOutput,
+    memos: list[SpecialistMemo],
+    critic: CriticReport,
+    llm: "LLMProvider | None" = None,
+) -> Iterator[str]:
+    """Stream synthesis tokens as they arrive from the LLM.
+
+    Falls back to yielding the stub response in chunks if LLM is unavailable.
+    Callers should buffer yielded tokens to reconstruct the full response.
+    """
+    if llm is not None:
+        try:
+            memos_text = "\n\n".join(
+                f"Specialist: {m.specialist_id}\nAnalysis: {m.analysis}\nRecommendation: {m.recommendation}"
+                for m in memos
+            )
+            critic_text = (
+                f"Critic blind spots: {json.dumps(critic.blind_spots)}\n"
+                f"Challenged assumptions: {json.dumps(critic.challenged_assumptions)}\n"
+                f"Alternative path: {critic.alternative_path}\n"
+                f"Residual risks: {json.dumps(critic.residual_risks)}"
+            )
+            llm_prompt = (
+                f"User question: {plan.problem_statement}\n\n"
+                f"Planner identified domains: {', '.join(plan.domains_involved)}\n"
+                f"Output format requested: {plan.output_format}\n\n"
+                f"Specialist memos:\n{memos_text}\n\n"
+                f"Critic review:\n{critic_text}"
+            )
+            yield from llm.stream(_SYNTHESIZER_STREAM_SYSTEM, llm_prompt, max_tokens=3000)
+            return
+        except Exception:
+            pass
+
+    # Stub fallback — yield the pre-computed stub text in word-sized chunks
+    stub_text = synthesize(plan, memos, critic, llm=None).direct_answer
+    for word in stub_text.split(" "):
+        yield word + " "

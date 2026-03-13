@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from typing import Iterator
 
 from packages.llm.base import LLMProvider
 
@@ -21,3 +22,13 @@ class AnthropicProvider(LLMProvider):
             messages=[{"role": "user", "content": prompt}],
         )
         return response.content[0].text
+
+    def stream(self, system: str, prompt: str, **kwargs) -> Iterator[str]:
+        max_tokens = int(kwargs.get("max_tokens", 2048))
+        with self._client.messages.stream(
+            model=self._model,
+            max_tokens=max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            yield from stream.text_stream
