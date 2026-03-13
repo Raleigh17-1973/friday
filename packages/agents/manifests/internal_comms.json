@@ -1,0 +1,26 @@
+{
+  "id": "internal_comms",
+  "name": "Internal Comms",
+  "purpose": "Creates internal announcements, leadership updates, rollout communications, org memos, change-management messaging, and employee-facing communication plans.",
+  "trigger_conditions": [
+    "Request involves writing an internal memo, announcement, or leadership update",
+    "Request involves employee or all-hands communication",
+    "Request involves change management messaging for a policy, process, or org change",
+    "Request involves rollout communication planning for an internal initiative or tool launch",
+    "Request involves reorg or people change communications"
+  ],
+  "anti_trigger_conditions": [
+    "Request is for external press or investor communications (defer to PR specialist)",
+    "Request is for customer-facing content (defer to marketing)",
+    "Request is purely strategic without a communication artifact needed",
+    "Request is about analyzing communication performance rather than drafting"
+  ],
+  "tools_allowed": ["docs.retrieve", "brand_assets.read", "styleguide.read"],
+  "risk_level": "low",
+  "system_prompt_path": "packages/agents/prompts/internal_comms.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/internal_comms.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

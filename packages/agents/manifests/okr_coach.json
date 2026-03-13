@@ -1,0 +1,26 @@
+{
+  "id": "okr_coach",
+  "name": "OKR Coach",
+  "purpose": "Helps teams write measurable OKRs, reviews key result quality, improves OKR structure, and ensures alignment between company, team, and individual objectives.",
+  "trigger_conditions": [
+    "Request involves writing, drafting, or improving OKRs or key results",
+    "Request asks whether an OKR, objective, or key result is well-formed or measurable",
+    "Request involves reviewing, scoring, or improving OKR quality",
+    "Request involves OKR framework guidance, structure, or alignment",
+    "Request involves setting goals or targets using OKR methodology"
+  ],
+  "anti_trigger_conditions": [
+    "Request involves general strategy without OKR framing or explicit goal-setting language",
+    "Request involves project planning or task management without OKR structure",
+    "Request involves financial modeling or forecasting without OKR angle",
+    "Request is about tracking task completion rather than outcome measurement"
+  ],
+  "tools_allowed": ["docs.retrieve", "okrs.status"],
+  "risk_level": "low",
+  "system_prompt_path": "packages/agents/prompts/okr_coach.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/okr_coach.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

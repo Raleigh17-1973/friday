@@ -806,27 +806,303 @@ class KRProgressPayload(BaseModel):
     current: float
 
 
+# ── Full OKR Pydantic models ──────────────────────────────────────────────────
+
+class ObjectiveCreate(BaseModel):
+    org_id: str = "default"
+    workspace_id: Optional[str] = None
+    title: str
+    description: str = ""
+    owner: str = "user"
+    collaborators: list[str] = []
+    parent_id: Optional[str] = None
+    level: str = "team"
+    period: str = "2026-Q1"
+    status: str = "active"
+    confidence: float = 0.7
+    rationale: str = ""
+    linked_initiatives: list[str] = []
+    linked_docs: list[str] = []
+
+
+class KeyResultCreate(BaseModel):
+    title: str
+    metric_type: str = "number"
+    baseline: float = 0.0
+    current_value: float = 0.0
+    target_value: float = 100.0
+    unit: str = ""
+    owner: str = "user"
+    data_source: str = ""
+    update_cadence: str = "weekly"
+    status: str = "active"
+    confidence: float = 0.7
+    due_date: str = ""
+    notes: str = ""
+
+
+class InitiativeCreate(BaseModel):
+    title: str
+    owner: str = "user"
+    kr_id: Optional[str] = None
+    status: str = "not_started"
+    due_date: str = ""
+    description: str = ""
+    org_id: str = "default"
+    workspace_id: Optional[str] = None
+
+
+class CheckInCreate(BaseModel):
+    author: str = "user"
+    status: str = "on_track"
+    confidence: float = 0.7
+    highlights: str = ""
+    blockers: str = ""
+    next_steps: str = ""
+
+
+# ── Workspace Pydantic models ─────────────────────────────────────────────────
+
+class WorkspaceCreate(BaseModel):
+    name: str
+    description: str = ""
+    icon: str = "🗂️"
+    color: str = "#6366f1"
+    type: str = "team"
+    owner: str = "user"
+    org_id: str = "default"
+    visibility: str = "open"
+    default_view: str = "chat"
+
+
+class WorkspaceMemberAdd(BaseModel):
+    user_id: str
+    role: str = "editor"
+
+
+class WorkspaceLinkCreate(BaseModel):
+    entity_type: str
+    entity_id: str
+
+
 @app.get("/okrs")
-def list_okrs(org_id: str = "org-1") -> list[dict]:
-    return service.okrs.list_objectives(org_id=org_id)
+def list_okrs(
+    org_id: str = "org-1",
+    workspace_id: Optional[str] = None,
+    level: Optional[str] = None,
+    period: Optional[str] = None,
+    status: Optional[str] = None,
+) -> list[dict]:
+    objs = service.okrs.list_objectives(
+        org_id=org_id,
+        workspace_id=workspace_id,
+        parent_id=None,  # return all, not just root
+        level=level,
+        period=period,
+        status=status,
+    )
+    return [asdict(o) for o in objs]
 
 
 @app.post("/okrs", status_code=201)
-def create_objective(payload: ObjectivePayload) -> dict:
-    return service.okrs.create_objective(
-        name=payload.name, description=payload.description,
-        period=payload.period, org_id=payload.org_id)
+def create_objective_full(payload: ObjectiveCreate) -> dict:
+    obj = service.okrs.create_objective(
+        title=payload.title,
+        period=payload.period,
+        org_id=payload.org_id,
+        description=payload.description,
+        owner=payload.owner,
+        level=payload.level,
+        parent_id=payload.parent_id,
+        workspace_id=payload.workspace_id,
+        collaborators=payload.collaborators,
+        rationale=payload.rationale,
+        confidence=payload.confidence,
+    )
+    return asdict(obj)
+
+
+@app.get("/okrs/{obj_id}")
+def get_objective(obj_id: str) -> dict:
+    result = service.okrs.get_objective_with_details(obj_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Not found")
+    return result
+
+
+@app.put("/okrs/{obj_id}")
+def update_objective(obj_id: str, payload: dict) -> dict:
+    obj = service.okrs.update_objective(obj_id, **payload)
+    if obj is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return asdict(obj)
+
+
+@app.delete("/okrs/{obj_id}", status_code=204)
+def delete_objective(obj_id: str) -> None:
+    service.okrs.update_objective(obj_id, status="cancelled")
+
+
+@app.get("/okrs/{obj_id}/children")
+def list_objective_children(obj_id: str, org_id: str = "org-1") -> list[dict]:
+    children = service.okrs.get_children(obj_id, org_id=org_id)
+    return [asdict(c) for c in children]
 
 
 @app.post("/okrs/{obj_id}/key-results", status_code=201)
-def create_key_result(obj_id: str, payload: KeyResultPayload) -> dict:
-    return service.okrs.create_key_result(
-        objective_id=obj_id, name=payload.name, target=payload.target, unit=payload.unit)
+def create_key_result_full(obj_id: str, payload: KeyResultCreate) -> dict:
+    obj = service.okrs.get_objective(obj_id)
+    if obj is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    kr = service.okrs.create_key_result(
+        objective_id=obj_id,
+        title=payload.title,
+        target_value=payload.target_value,
+        org_id=obj.org_id,
+        unit=payload.unit,
+        baseline=payload.baseline,
+        owner=payload.owner,
+        metric_type=payload.metric_type,
+        data_source=payload.data_source,
+        update_cadence=payload.update_cadence,
+        due_date=payload.due_date,
+        confidence=payload.confidence,
+    )
+    return asdict(kr)
+
+
+@app.put("/okrs/key-results/{kr_id}")
+def update_key_result_full(kr_id: str, payload: dict) -> dict:
+    kr = service.okrs.update_key_result(kr_id, **payload)
+    if kr is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return asdict(kr)
+
+
+@app.post("/okrs/{obj_id}/initiatives", status_code=201)
+def create_initiative(obj_id: str, payload: InitiativeCreate) -> dict:
+    init = service.okrs.create_initiative(
+        title=payload.title,
+        objective_id=obj_id,
+        org_id=payload.org_id,
+        owner=payload.owner,
+        kr_id=payload.kr_id,
+        description=payload.description,
+        due_date=payload.due_date,
+        workspace_id=payload.workspace_id,
+    )
+    return asdict(init)
+
+
+@app.post("/okrs/{obj_id}/check-in", status_code=201)
+def okr_checkin(obj_id: str, payload: CheckInCreate) -> dict:
+    notes_parts = []
+    if payload.highlights:
+        notes_parts.append(f"Highlights: {payload.highlights}")
+    if payload.blockers:
+        notes_parts.append(f"Blockers: {payload.blockers}")
+    if payload.next_steps:
+        notes_parts.append(f"Next steps: {payload.next_steps}")
+    notes = "\n".join(notes_parts)
+    obj = service.okrs.get_objective(obj_id)
+    if obj is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    checkin = service.okrs.add_checkin(
+        objective_id=obj_id,
+        notes=notes,
+        confidence=payload.confidence,
+        status=payload.status,
+        author=payload.author,
+        org_id=obj.org_id,
+    )
+    return asdict(checkin)
 
 
 @app.put("/okrs/key-results/{kr_id}/progress")
 def update_kr_progress(kr_id: str, payload: KRProgressPayload) -> dict:
     return service.okrs.update_key_result_progress(kr_id, current=payload.current)
+
+
+# ── Workspace endpoints ───────────────────────────────────────────────────────
+
+@app.get("/workspaces")
+def list_workspaces(org_id: str = "default") -> list[dict]:
+    workspaces = service.workspaces.list(org_id=org_id)
+    return [asdict(w) for w in workspaces]
+
+
+@app.post("/workspaces", status_code=201)
+def create_workspace(payload: WorkspaceCreate) -> dict:
+    ws = service.workspaces.create(
+        name=payload.name,
+        org_id=payload.org_id,
+        owner=payload.owner,
+        type=payload.type,
+        description=payload.description,
+        icon=payload.icon,
+        color=payload.color,
+        visibility=payload.visibility,
+        default_view=payload.default_view,
+    )
+    return asdict(ws)
+
+
+@app.get("/workspaces/{workspace_id}")
+def get_workspace(workspace_id: str) -> dict:
+    ws = service.workspaces.get(workspace_id)
+    if ws is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return asdict(ws)
+
+
+@app.put("/workspaces/{workspace_id}")
+def update_workspace(workspace_id: str, payload: dict) -> dict:
+    ws = service.workspaces.update(workspace_id, **payload)
+    if ws is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return asdict(ws)
+
+
+@app.post("/workspaces/{workspace_id}/archive")
+def archive_workspace(workspace_id: str) -> dict:
+    service.workspaces.archive(workspace_id)
+    return {"status": "archived", "workspace_id": workspace_id}
+
+
+@app.get("/workspaces/{workspace_id}/members")
+def list_workspace_members(workspace_id: str) -> list[dict]:
+    members = service.workspaces.list_members(workspace_id)
+    return [asdict(m) for m in members]
+
+
+@app.post("/workspaces/{workspace_id}/members", status_code=201)
+def add_workspace_member(workspace_id: str, payload: WorkspaceMemberAdd) -> dict:
+    member = service.workspaces.add_member(workspace_id, user_id=payload.user_id, role=payload.role)
+    return asdict(member)
+
+
+@app.delete("/workspaces/{workspace_id}/members/{user_id}", status_code=204)
+def remove_workspace_member(workspace_id: str, user_id: str) -> None:
+    service.workspaces.remove_member(workspace_id, user_id)
+
+
+@app.post("/workspaces/{workspace_id}/link", status_code=201)
+def link_workspace_entity(workspace_id: str, payload: WorkspaceLinkCreate) -> dict:
+    link = service.workspaces.link_entity(workspace_id, entity_type=payload.entity_type, entity_id=payload.entity_id)
+    return asdict(link)
+
+
+@app.get("/workspaces/{workspace_id}/overview")
+def workspace_overview(workspace_id: str) -> dict:
+    ws = service.workspaces.get(workspace_id)
+    if ws is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    members = service.workspaces.list_members(workspace_id)
+    return {
+        "workspace": asdict(ws),
+        "member_count": len(members),
+        "recent_okrs": [],
+    }
 
 
 # ── Finance endpoints ────────────────────────────────────────────────────────

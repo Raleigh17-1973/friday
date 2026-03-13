@@ -1,0 +1,26 @@
+{
+  "id": "public_relations",
+  "name": "Public Relations",
+  "purpose": "Handles external communications strategy, press messaging, media response framing, announcement positioning, reputational considerations, and narrative control.",
+  "trigger_conditions": [
+    "Request involves a public announcement, press release, or external narrative",
+    "Request involves reputation-sensitive events, crises, or media response",
+    "Request involves a company launch, milestone, or news with media implications",
+    "Request involves talking points for external audiences including media, analysts, or public",
+    "Request involves external communications strategy or narrative positioning"
+  ],
+  "anti_trigger_conditions": [
+    "Request is purely internal — no external audience or public component",
+    "Request is investor-relations only without public communications component",
+    "Request is customer-facing content without a PR/reputation dimension",
+    "Request is legal analysis without reputational framing needed"
+  ],
+  "tools_allowed": ["web.research", "docs.retrieve"],
+  "risk_level": "high",
+  "system_prompt_path": "packages/agents/prompts/public_relations.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/public_relations.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

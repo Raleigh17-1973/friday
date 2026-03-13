@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 _PLANNER_SYSTEM = """\
 You are Friday's planning engine. Analyze the user's business request and produce a routing plan.
 
-Available specialist IDs: chief_of_staff_strategist, project_manager, finance, operations, sales_revenue, writer_scribe, research, critic_red_team, process_mapper, document_specialist
+Available specialist IDs: chief_of_staff_strategist, project_manager, finance, operations, sales_revenue, writer_scribe, research, critic_red_team, process_mapper, document_specialist, ai_strategy, internal_comms, public_relations, mergers_acquisitions, okr_coach
 
 Respond ONLY with valid JSON (no markdown fences):
 {
@@ -205,12 +205,81 @@ def build_plan(message: str, llm: "LLMProvider | None" = None) -> PlannerOutput:
         if "proactive.alerts" not in tools:
             tools.append("proactive.alerts")
 
+    # Initialize risk_level and output_format before specialist routing blocks
+    risk_level = RiskLevel.LOW
+    output_format = None
+
+    # AI Strategy routing
+    _AI_STRATEGY_KEYWORDS = [
+        "automate", "automation opportunity", "agent strategy", "where can ai",
+        "agentize", "ai readiness", "process automation", "replace with ai",
+        "augment with ai", "ai operating model", "intelligent automation",
+        "workflow automation", "where should ai", "ai strategy", "automate this",
+        "repetitive work", "manual process", "candidate for automation",
+    ]
+    if any(kw in text for kw in _AI_STRATEGY_KEYWORDS):
+        if "ai_strategy" not in specialists:
+            specialists.append("ai_strategy")
+
+    # Internal Comms routing
+    _INTERNAL_COMMS_KEYWORDS = [
+        "internal announcement", "internal memo", "all-hands", "all hands",
+        "change management", "employee communication", "rollout communication",
+        "org memo", "leadership update", "internal launch", "reorg communication",
+        "policy change announcement", "announce to the team", "communicate to employees",
+        "staff announcement", "manager update", "internal message",
+    ]
+    if any(kw in text for kw in _INTERNAL_COMMS_KEYWORDS):
+        if "internal_comms" not in specialists:
+            specialists.append("internal_comms")
+        if output_format != "full_deliverable":
+            output_format = "full_deliverable"
+
+    # PR routing
+    _PR_KEYWORDS = [
+        "press release", "media strategy", "pr strategy", "public announcement",
+        "press statement", "journalist", "media response", "reputation",
+        "external narrative", "public relations", "launch announcement",
+        "talking points", "media q&a", "spokesperson", "external comms",
+        "narrative control", "news release", "pr angle", "crisis comms",
+    ]
+    if any(kw in text for kw in _PR_KEYWORDS):
+        if "public_relations" not in specialists:
+            specialists.append("public_relations")
+        if risk_level == RiskLevel.LOW:
+            risk_level = RiskLevel.MEDIUM
+
+    # M&A routing
+    _MA_KEYWORDS = [
+        "acquisition", "acquire", "acqui-hire", "merger", "m&a",
+        "due diligence", "diligence", "divestiture", "synergy",
+        "post-merger", "integration plan", "buy vs build", "strategic partnership",
+        "target company", "deal structure", "term sheet", "loi", "letter of intent",
+        "acquihire", "strategic acquisition", "ma strategy",
+    ]
+    if any(kw in text for kw in _MA_KEYWORDS):
+        if "mergers_acquisitions" not in specialists:
+            specialists.append("mergers_acquisitions")
+        risk_level = RiskLevel.HIGH
+
+    # OKR Coach routing
+    _OKR_COACH_KEYWORDS = [
+        "write an okr", "review my okr", "is this a good kr", "key result",
+        "okr coach", "okr review", "measurable goal", "okr framework",
+        "help me set okrs", "okr quality", "okr scoring", "okr alignment",
+        "write okrs", "improve my okrs", "review these okrs",
+        "is this measurable", "help with okrs", "okr structure",
+    ]
+    if any(kw in text for kw in _OKR_COACH_KEYWORDS):
+        if "okr_coach" not in specialists:
+            specialists.append("okr_coach")
+
     if not domains:
         domains.append("strategy")
 
-    risk_level = RiskLevel.LOW
-    if any(token in text for token in ["legal", "compliance", "security", "customer data"]):
-        risk_level = RiskLevel.MEDIUM
+    if risk_level == RiskLevel.LOW:
+        if any(token in text for token in ["legal", "compliance", "security", "customer data"]):
+            risk_level = RiskLevel.MEDIUM
 
     missing_info = []
     has_timeline = any(
@@ -280,14 +349,15 @@ def build_plan(message: str, llm: "LLMProvider | None" = None) -> PlannerOutput:
         if "risk" not in text and not has_constraints:
             missing_info.append("What failure risks are you most concerned about?")
 
-    if is_process_mapping:
-        output_format = "full_deliverable"
-    elif is_business_case:
-        output_format = "business_case_draft"
-    elif is_creation_request:
-        output_format = "full_deliverable"
-    else:
-        output_format = "executive_brief"
+    if output_format is None:
+        if is_process_mapping:
+            output_format = "full_deliverable"
+        elif is_business_case:
+            output_format = "business_case_draft"
+        elif is_creation_request:
+            output_format = "full_deliverable"
+        else:
+            output_format = "executive_brief"
 
     return PlannerOutput(
         problem_statement=message.strip(),

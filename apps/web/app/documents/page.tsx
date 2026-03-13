@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { PageShell } from "@/components/page-shell";
 
 const BACKEND = process.env.NEXT_PUBLIC_FRIDAY_BACKEND_URL ?? "http://127.0.0.1:8000";
 
@@ -81,17 +82,16 @@ export default function DocumentsPage() {
   ];
 
   return (
-    <main className="docs-page">
-      <header className="docs-header">
-        <div>
-          <h1>Documents</h1>
-          <p className="docs-subtitle">Generated files</p>
-        </div>
+    <PageShell
+      title="Documents"
+      subtitle="Generated reports, memos, and deliverables"
+      headerActions={
         <Link href="/" className="docs-chat-link">
           + Ask Friday to create one
         </Link>
-      </header>
-
+      }
+    >
+    <div className="docs-page">
       <div className="docs-filter" role="group" aria-label="Filter by type">
         {tabs.map((tab) => (
           <button

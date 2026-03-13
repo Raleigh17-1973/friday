@@ -40,6 +40,116 @@ if TYPE_CHECKING:
     from packages.llm.base import LLMProvider
 
 
+# ---------------------------------------------------------------------------
+# Provenance / consultation-history classifier
+# ---------------------------------------------------------------------------
+
+_PROVENANCE_PATTERNS = [
+    "did you consult", "which agents", "who did you consult",
+    "did you ask", "why didn't you", "why did you not",
+    "did you use the", "did you research", "did you check with",
+    "who was consulted", "what agents", "which specialists",
+    "did legal", "did finance", "did hr", "did security",
+    "was legal consulted", "was finance consulted",
+    "did you involve", "did you loop in", "which experts",
+    "what specialists", "did you use any agents", "what did you consult",
+    "who did you use", "did you ask legal", "did you ask finance",
+]
+
+# Domain keywords used to detect when an agent *should* have been consulted
+_DOMAIN_AGENT_MAP = {
+    "legal": "legal_compliance",
+    "compliance": "legal_compliance",
+    "finance": "finance",
+    "financial": "finance",
+    "hr": "people_hr",
+    "people": "people_hr",
+    "security": "security_risk",
+    "risk": "security_risk",
+    "marketing": "marketing_brand",
+    "sales": "sales_revenue",
+    "operations": "operations",
+    "strategy": "chief_of_staff_strategist",
+    "product": "product",
+    "research": "research",
+    "data": "data_analytics",
+    "analytics": "data_analytics",
+    "pr": "public_relations",
+    "public relations": "public_relations",
+    "m&a": "mergers_acquisitions",
+    "acquisition": "mergers_acquisitions",
+    "internal comms": "internal_comms",
+    "communications": "internal_comms",
+    "ai strategy": "ai_strategy",
+    "automation": "ai_strategy",
+    "okr": "okr_coach",
+}
+
+_AGENT_DISPLAY_NAMES = {
+    "legal_compliance": "Legal / Compliance",
+    "finance": "Finance",
+    "people_hr": "People / HR",
+    "security_risk": "Security / Risk",
+    "marketing_brand": "Marketing / Brand",
+    "sales_revenue": "Sales / Revenue",
+    "operations": "Operations",
+    "chief_of_staff_strategist": "Chief of Staff / Strategist",
+    "product": "Product",
+    "research": "Research",
+    "data_analytics": "Data / Analytics",
+    "public_relations": "Public Relations",
+    "mergers_acquisitions": "M&A",
+    "internal_comms": "Internal Comms",
+    "ai_strategy": "AI Strategy",
+    "okr_coach": "OKR Coach",
+    "project_manager": "Project Manager",
+    "process_mapper": "Process Mapper",
+    "document_specialist": "Document Specialist",
+    "writer_scribe": "Writer / Scribe",
+    "critic_red_team": "Critic / Red Team",
+    "agent_architect": "Agent Architect",
+    "customer_success_support": "Customer Success / Support",
+}
+
+
+def _is_provenance_question(message: str) -> bool:
+    """Return True if the message is asking about prior consultation/agent usage."""
+    lower = message.lower().strip()
+    return any(pattern in lower for pattern in _PROVENANCE_PATTERNS)
+
+
+def _build_provenance_answer(message: str, trace: "RunTrace") -> str:
+    """Build a direct, factual answer about which agents were consulted."""
+    consulted_ids = trace.selected_agents or []
+    consulted_names = [_AGENT_DISPLAY_NAMES.get(a, a) for a in consulted_ids]
+
+    # Detect if the user is asking about a specific domain
+    msg_lower = message.lower()
+    asked_about: list[str] = []
+    for keyword, agent_id in _DOMAIN_AGENT_MAP.items():
+        if keyword in msg_lower and agent_id not in consulted_ids:
+            display = _AGENT_DISPLAY_NAMES.get(agent_id, agent_id)
+            if display not in asked_about:
+                asked_about.append(display)
+
+    if consulted_names:
+        consulted_str = ", ".join(consulted_names)
+        answer = f"For that response, I consulted: **{consulted_str}**."
+    else:
+        answer = "That response was handled directly without specialist consultation."
+
+    if asked_about:
+        missed = ", ".join(asked_about)
+        answer += (
+            f"\n\nI did **not** consult {missed} — that was an oversight for this type of question. "
+            f"I can revisit the response with {missed}'s perspective if you'd like."
+        )
+    elif consulted_names:
+        answer += " All relevant specialists for that request were included."
+
+    return answer
+
+
 class FridayManager:
     def __init__(
         self,
@@ -68,6 +178,65 @@ class FridayManager:
             conversation_id=request.conversation_id,
             working={"user_message": request.message, "context_packet": request.context_packet},
         )
+        # -----------------------------------------------------------------------
+        # Provenance short-circuit: answer consultation-history questions
+        # directly from RunTrace metadata without running the full pipeline.
+        # -----------------------------------------------------------------------
+        if _is_provenance_question(request.message):
+            recent_trace = self._audit.get_latest_run_for_conversation(request.conversation_id)
+            if recent_trace is not None:
+                answer = _build_provenance_answer(request.message, recent_trace)
+                from packages.common.models import FinalAnswerPackage
+                provenance_answer = FinalAnswerPackage(
+                    direct_answer=answer,
+                    executive_summary="Consultation history retrieved from run metadata.",
+                    key_assumptions=[],
+                    major_risks=[],
+                    recommended_next_steps=[],
+                    what_i_would_do_first=None,
+                    experts_consulted=recent_trace.selected_agents,
+                    confidence=1.0,
+                )
+                self._memory.append_conversation(
+                    request.conversation_id,
+                    {
+                        "run_id": run_id,
+                        "user": request.message,
+                        "final_answer": asdict(provenance_answer),
+                        "selected_agents": [],
+                    },
+                )
+                return {
+                    "run_id": run_id,
+                    "final_answer": asdict(provenance_answer),
+                    "planner": {
+                        "problem_statement": request.message,
+                        "output_format": "executive_brief",
+                        "domains_involved": [],
+                        "recommended_specialists": [],
+                        "required_tools": [],
+                        "risk_level": "low",
+                        "missing_information": [],
+                    },
+                    "tool_calls": [],
+                    "specialist_memos": [],
+                    "critic_report": {
+                        "blind_spots": [],
+                        "challenged_assumptions": [],
+                        "alternative_path": "",
+                        "residual_risks": [],
+                        "confidence": 1.0,
+                    },
+                    "approval": None,
+                    "memory_candidates": [],
+                    "memory_context": {
+                        "conversation_events": len(memory_bundle.conversation),
+                        "episodic_items": len(memory_bundle.episodic),
+                    },
+                    "observability": {},
+                    "response": answer,
+                }
+
         planning_message = self._resolve_planning_message(request.message, memory_bundle.conversation)
         planning_message = self._inject_recalled_context(
             planning_message, request.org_id, request.message, episodic=memory_bundle.episodic
@@ -217,6 +386,22 @@ class FridayManager:
             planning_message = self._inject_recalled_context(
                 planning_message, request.org_id, request.message, episodic=memory_bundle.episodic
             )
+
+            # Provenance short-circuit for streaming path
+            if _is_provenance_question(request.message):
+                recent_trace = self._audit.get_latest_run_for_conversation(request.conversation_id)
+                if recent_trace is not None:
+                    answer = _build_provenance_answer(request.message, recent_trace)
+                    yield {"event": "token", "text": answer}
+                    yield {
+                        "event": "done",
+                        "run_id": run_id,
+                        "selected_agents": [],
+                        "output_format": "executive_brief",
+                        "domains": [],
+                        "llm_active": self._llm is not None,
+                    }
+                    return
 
             yield {"event": "status", "label": "Planning your request"}
             plan = build_plan(planning_message, llm=self._llm)

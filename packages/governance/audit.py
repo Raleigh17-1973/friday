@@ -66,3 +66,23 @@ class AuditLog:
         if self._run_store is not None:
             return self._run_store.list_runs(limit=limit)
         return []
+
+    def get_latest_run_for_conversation(self, conversation_id: str) -> RunTrace | None:
+        """Return the most recent RunTrace for a given conversation_id."""
+        # Check in-memory store first (most recent session)
+        candidates = [
+            t for t in self._runs.values()
+            if t.conversation_id == conversation_id
+        ]
+        if candidates:
+            latest = max(candidates, key=lambda t: t.created_at)
+            return latest
+        # Fall back to run_store summary lookup
+        if self._run_store is not None:
+            summaries = self._run_store.list_runs(limit=200)
+            for s in summaries:
+                if s.get("conversation_id") == conversation_id:
+                    run_id = s.get("run_id", "")
+                    if run_id:
+                        return self.get_run(run_id)
+        return None

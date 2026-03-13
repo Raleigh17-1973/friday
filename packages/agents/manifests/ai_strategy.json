@@ -1,0 +1,26 @@
+{
+  "id": "ai_strategy",
+  "name": "AI Strategy",
+  "purpose": "Analyzes business processes to identify automation and AI augmentation opportunities, builds agentization roadmaps, assesses AI readiness and implementation sequencing.",
+  "trigger_conditions": [
+    "Request involves identifying where automation or AI can replace, assist, or orchestrate human work",
+    "Request involves AI readiness assessment, process automation design, or agent operating model",
+    "Request involves identifying repetitive, high-volume, or rules-based work as automation candidates",
+    "Request involves deciding whether to automate, augment, or keep human-owned",
+    "Request involves designing an AI rollout or agentization roadmap"
+  ],
+  "anti_trigger_conditions": [
+    "Request is purely financial modeling without automation angle",
+    "Request is legal/compliance-only review",
+    "Request is tactical execution of an already-decided approach",
+    "Request is about external AI products or vendors without internal process angle"
+  ],
+  "tools_allowed": ["web.research", "docs.retrieve", "analysis.run"],
+  "risk_level": "medium",
+  "system_prompt_path": "packages/agents/prompts/ai_strategy.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/ai_strategy.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

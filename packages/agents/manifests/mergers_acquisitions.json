@@ -1,0 +1,26 @@
+{
+  "id": "mergers_acquisitions",
+  "name": "M&A",
+  "purpose": "Evaluates acquisitions, acqui-hires, divestitures, strategic partnerships with M&A-like structure, integration implications, diligence workstreams, synergy logic, and post-merger risks.",
+  "trigger_conditions": [
+    "Request involves evaluating or analyzing an acquisition, merger, or divestiture",
+    "Request involves acqui-hire or team acquisition evaluation",
+    "Request involves post-merger integration planning or diligence support",
+    "Request involves synergy analysis or buy vs build vs partner analysis where acquisition is plausible",
+    "Request involves deal structure, term sheet analysis, or LOI review"
+  ],
+  "anti_trigger_conditions": [
+    "Request involves routine vendor contracts without M&A-like structure",
+    "Request involves standard commercial partnerships without equity or acquisition component",
+    "Request is pure financial modeling with no deal/transaction angle",
+    "Request is legal contract review without strategic M&A dimension"
+  ],
+  "tools_allowed": ["web.research", "docs.retrieve", "modeling.scenarios", "modeling.dcf"],
+  "risk_level": "high",
+  "system_prompt_path": "packages/agents/prompts/mergers_acquisitions.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/mergers_acquisitions.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

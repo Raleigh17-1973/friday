@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { PageShell } from "@/components/page-shell";
 
 const BACKEND = process.env.NEXT_PUBLIC_FRIDAY_BACKEND_URL ?? "http://127.0.0.1:8000";
 
@@ -123,17 +124,16 @@ export default function AnalyticsPage() {
   };
 
   return (
-    <main className="analytics-page">
-      <header className="analytics-header">
-        <div>
-          <h1>Analytics</h1>
-          <p className="analytics-subtitle">Key Performance Indicators</p>
-        </div>
+    <PageShell
+      title="Analytics"
+      subtitle="KPI tracking and business intelligence"
+      headerActions={
         <button className="analytics-add-btn" onClick={() => setShowModal(true)}>
           + Add KPI
         </button>
-      </header>
-
+      }
+    >
+    <div className="analytics-page">
       {!loading && kpis.length > 0 && (
         <section className="analytics-summary" aria-label="KPI summary">
           <div className="analytics-summary-stat">
@@ -284,6 +284,7 @@ export default function AnalyticsPage() {
           </div>
         </div>
       )}
-    </main>
+    </div>
+    </PageShell>
   );
 }
