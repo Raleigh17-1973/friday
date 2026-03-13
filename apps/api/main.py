@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import pathlib
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Optional
 
 # Load .env from project root before anything else reads os.getenv()
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -113,17 +113,17 @@ class ProcessUpdatePayload(BaseModel):
     author: str = "user"
     changelog_entry: str = ""
     # fields to update (any subset)
-    process_name: str | None = None
-    trigger: str | None = None
-    steps: list[dict] | None = None
-    decision_points: list[dict] | None = None
-    roles: list[str] | None = None
-    tools: list[str] | None = None
-    exceptions: list[dict] | None = None
-    kpis: list[dict] | None = None
-    mermaid_flowchart: str | None = None
-    mermaid_swimlane: str | None = None
-    status: str | None = None
+    process_name: Optional[str] = None
+    trigger: Optional[str] = None
+    steps: Optional[list] = None
+    decision_points: Optional[list] = None
+    roles: Optional[list] = None
+    tools: Optional[list] = None
+    exceptions: Optional[list] = None
+    kpis: Optional[list] = None
+    mermaid_flowchart: Optional[str] = None
+    mermaid_swimlane: Optional[str] = None
+    status: Optional[str] = None
 
 
 @app.middleware("http")
