@@ -787,7 +787,7 @@ export default function OKRsPage() {
   };
 
   return (
-    <PageShell>
+    <PageShell title="OKRs">
       <style>{`
         @keyframes pulse {
           0%, 100% { opacity: 1; }

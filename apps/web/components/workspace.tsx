@@ -2,10 +2,20 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  BarChart2,
+  FileText,
+  Folders,
+  Settings,
+  Target,
+  Workflow,
+  type LucideIcon,
+} from "lucide-react";
 
 const BACKEND = process.env.NEXT_PUBLIC_FRIDAY_BACKEND_URL ?? "http://127.0.0.1:8000";
 
 import { useChatState } from "@/components/use-chat-state";
+import { MarkdownMessage } from "@/components/markdown-message";
 import type { ChatMode, ConversationThread, FridayMessage } from "@/lib/types";
 
 // Mermaid is browser-only (DOM required) — load dynamically, no SSR
@@ -49,6 +59,39 @@ function parseSegments(text: string): Segment[] {
   return segments.length > 0 ? segments : [{ kind: "text", content: text }];
 }
 
+// ── Nav items ──────────────────────────────────────────────────────────────
+type NavItem = { label: string; href: string; icon: LucideIcon };
+
+const NAV_ITEMS: NavItem[] = [
+  { label: "Process Library", href: "/processes",  icon: Workflow  },
+  { label: "Documents",       href: "/documents",  icon: FileText  },
+  { label: "Analytics",       href: "/analytics",  icon: BarChart2 },
+  { label: "OKRs",            href: "/okrs",       icon: Target    },
+  { label: "Workspaces",      href: "/workspaces", icon: Folders   },
+  { label: "Settings",        href: "/settings",   icon: Settings  },
+];
+
+// ── Status dot ────────────────────────────────────────────────────────────
+function StatusDot({ state }: { state: string }) {
+  const isConnected  = state === "connected";
+  const isDegraded   = state === "connecting" || state === "reconnecting";
+  const dotClass     = isConnected ? "status-dot-green"
+                     : isDegraded  ? "status-dot-amber"
+                     : "status-dot-red";
+
+  return (
+    <span className="status-dot-wrap" title={`Connection: ${state}`}>
+      <span className={`status-dot ${dotClass}`} />
+      {!isConnected && (
+        <span className="status-dot-label">
+          {isDegraded ? "Connecting…" : "Connection issues"}
+        </span>
+      )}
+    </span>
+  );
+}
+
+// ── Workspace items ───────────────────────────────────────────────────────
 type WorkspaceItem = { workspace_id: string; name: string; icon: string; color: string; slug: string };
 
 function LeftRail({
@@ -68,6 +111,9 @@ function LeftRail({
 }) {
   const [query, setQuery] = useState("");
   const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([]);
+  // Per-thread context menu state: threadId → "menu" | "confirm-delete" | null
+  const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -82,15 +128,56 @@ function LeftRail({
       .catch(() => {});
   }, []);
 
+  // Close menu when clicking outside
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = () => setMenuOpen(null);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [menuOpen]);
+
+  const handleMenuToggle = (e: React.MouseEvent, threadId: string) => {
+    e.stopPropagation();
+    setMenuOpen((prev) => prev === threadId ? null : threadId);
+    setConfirmDelete(null);
+  };
+
+  const handleRename = (e: React.MouseEvent, threadId: string) => {
+    e.stopPropagation();
+    setMenuOpen(null);
+    onRename(threadId);
+  };
+
+  const handleDeleteClick = (e: React.MouseEvent, threadId: string) => {
+    e.stopPropagation();
+    setMenuOpen(null);
+    setConfirmDelete(threadId);
+  };
+
+  const handleDeleteConfirm = (threadId: string) => {
+    setConfirmDelete(null);
+    onDelete(threadId);
+  };
+
+  const currentPath = typeof window !== "undefined" ? window.location.pathname : "";
+
   return (
     <aside className="left-rail" aria-label="Threads and saved context">
       <header className="rail-header">Friday</header>
-      <a href="/processes" className="processes-nav-link">📋 Process Library</a>
-      <a href="/documents" className="processes-nav-link">📄 Documents</a>
-      <a href="/analytics" className="processes-nav-link">📊 Analytics</a>
-      <a href="/okrs" className="processes-nav-link">🎯 OKRs</a>
-      <a href="/workspaces" className="processes-nav-link">🗂️ Workspaces</a>
-      <a href="/settings" className="processes-nav-link">⚙️ Settings</a>
+
+      <nav className="rail-nav" aria-label="Main navigation">
+        {NAV_ITEMS.map(({ label, href, icon: Icon }) => (
+          <a
+            key={href}
+            href={href}
+            className={`rail-nav-link${currentPath.startsWith(href) ? " rail-nav-link-active" : ""}`}
+          >
+            <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
+            {label}
+          </a>
+        ))}
+      </nav>
+
       <button className="new-chat" onClick={onCreate}>
         + New chat
       </button>
@@ -106,22 +193,65 @@ function LeftRail({
         <h2>Threads</h2>
         <ul className="thread-list">
           {filtered.map((thread) => (
-            <li key={thread.id} className={thread.id === activeThreadId ? "active" : ""}>
+            <li key={thread.id} className={`thread-item${thread.id === activeThreadId ? " active" : ""}`}>
               <button className="thread-title" onClick={() => onSelect(thread.id)}>
                 {thread.title}
               </button>
-              <div className="thread-actions">
-                <button aria-label={`Rename ${thread.title}`} onClick={() => onRename(thread.id)}>
-                  Rename
-                </button>
-                <button aria-label={`Delete ${thread.title}`} onClick={() => onDelete(thread.id)}>
-                  Delete
-                </button>
-              </div>
+
+              {/* Context menu trigger — visible on hover via CSS */}
+              <button
+                className="thread-menu-btn"
+                aria-label={`Options for ${thread.title}`}
+                onClick={(e) => handleMenuToggle(e, thread.id)}
+              >
+                ···
+              </button>
+
+              {/* Dropdown menu */}
+              {menuOpen === thread.id && (
+                <div className="thread-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    className="thread-menu-item"
+                    role="menuitem"
+                    onClick={(e) => handleRename(e, thread.id)}
+                  >
+                    Rename
+                  </button>
+                  <button
+                    className="thread-menu-item thread-menu-item-danger"
+                    role="menuitem"
+                    onClick={(e) => handleDeleteClick(e, thread.id)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              )}
+
+              {/* Inline delete confirmation */}
+              {confirmDelete === thread.id && (
+                <div className="thread-delete-confirm" onClick={(e) => e.stopPropagation()}>
+                  <span className="thread-delete-msg">Delete this thread? This cannot be undone.</span>
+                  <div className="thread-delete-actions">
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setConfirmDelete(null)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="btn btn-danger btn-sm"
+                      onClick={() => handleDeleteConfirm(thread.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              )}
             </li>
           ))}
         </ul>
       </section>
+
       <section>
         <h2>Workspaces</h2>
         <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
@@ -180,10 +310,18 @@ function LeftRail({
 function MessageRow({ message }: { message: FridayMessage }) {
   const isFriday = message.role === "friday";
   const segments = isFriday ? parseSegments(message.text) : null;
+  const [copied, setCopied] = useState(false);
   const genDoc = message.meta?.generated_document as {
     file_id: string; filename: string; mime_type: string;
     size_bytes: number; format: string; download_url: string;
   } | undefined;
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(message.text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
 
   return (
     <article className={`msg msg-${message.role}`}>
@@ -191,9 +329,9 @@ function MessageRow({ message }: { message: FridayMessage }) {
         segments.map((seg, i) =>
           seg.kind === "diagram" ? (
             <MermaidDiagram key={i} code={seg.code} />
-          ) : (
-            seg.content.trim() ? <p key={i}>{seg.content}</p> : null
-          )
+          ) : seg.content.trim() ? (
+            <MarkdownMessage key={i} content={seg.content} />
+          ) : null
         )
       ) : (
         <p>{message.text}</p>
@@ -209,6 +347,19 @@ function MessageRow({ message }: { message: FridayMessage }) {
         />
       )}
       <time dateTime={message.timestamp}>{new Date(message.timestamp).toLocaleTimeString()}</time>
+
+      {/* Hover action bar — only on AI messages */}
+      {isFriday && (
+        <div className="msg-actions" aria-label="Message actions">
+          <button
+            className="msg-action-btn"
+            onClick={handleCopy}
+            title="Copy to clipboard"
+          >
+            {copied ? "✓ Copied" : "Copy"}
+          </button>
+        </div>
+      )}
     </article>
   );
 }
@@ -314,22 +465,15 @@ function Composer({
     setValue("");
   };
 
+  const MODE_TOOLTIPS: Record<ChatMode, string> = {
+    ask:  "Get information, analysis, and answers",
+    plan: "Build strategies, roadmaps, and structured plans",
+    act:  "Execute tasks and make changes with Friday's help",
+  };
+
   return (
     <form className="composer" onSubmit={submit}>
-      <div className="mode-toggle" role="radiogroup" aria-label="Execution mode">
-        {(["ask", "plan", "act"] as ChatMode[]).map((opt) => (
-          <button
-            key={opt}
-            type="button"
-            role="radio"
-            aria-checked={mode === opt}
-            className={mode === opt ? "selected" : ""}
-            onClick={() => setMode(opt)}
-          >
-            {opt.toUpperCase()}
-          </button>
-        ))}
-      </div>
+      {/* Segmented mode control — moved into toolbar row */}
       <label htmlFor="composer-input" className="sr-only">
         Message Friday
       </label>
@@ -346,6 +490,23 @@ function Composer({
         ))}
       </div>
       <div className="composer-actions">
+        {/* Segmented control — left side */}
+        <div className="segmented-control" role="radiogroup" aria-label="Execution mode">
+          {(["ask", "plan", "act"] as ChatMode[]).map((opt) => (
+            <button
+              key={opt}
+              type="button"
+              role="radio"
+              aria-checked={mode === opt}
+              className={`segmented-btn${mode === opt ? " segmented-btn-active" : ""}`}
+              title={MODE_TOOLTIPS[opt]}
+              onClick={() => setMode(opt)}
+            >
+              {opt.toUpperCase()}
+            </button>
+          ))}
+        </div>
+
         <button type="button">Attach</button>
         <button type="button">/ Commands</button>
         {!streaming ? (
@@ -370,21 +531,31 @@ type Approval = {
   created_at: string;
 };
 
-function RightRail() {
-  const tabs = ["Context", "Experts", "Sources", "Artifacts", "Approvals", "Run"];
-  const [active, setActive] = useState(tabs[0]);
+// Confidence → human-readable label
+function confidenceLabel(score: number): string {
+  if (score >= 0.85) return "High confidence";
+  if (score >= 0.65) return "Moderate confidence";
+  return "Review recommended";
+}
+
+function RightRail({ lastRunMeta }: { lastRunMeta: { agents: string[]; confidence: number; latency?: number } | null }) {
+  const sections = ["This Response", "Experts Consulted", "Sources", "Artifacts", "Approvals"];
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({
+    "This Response": true,
+    "Experts Consulted": true,
+  });
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [approvalsLoading, setApprovalsLoading] = useState(false);
+  const isDev = process.env.NEXT_PUBLIC_DEV_MODE === "true";
 
   useEffect(() => {
-    if (active !== "Approvals") return;
     setApprovalsLoading(true);
     fetch(`${BACKEND}/approvals`)
       .then((res) => res.json())
       .then((data: unknown) => setApprovals(Array.isArray(data) ? (data as Approval[]) : []))
       .catch(() => setApprovals([]))
       .finally(() => setApprovalsLoading(false));
-  }, [active]);
+  }, []);
 
   const handleApproval = (approvalId: string, action: "approve" | "reject") => {
     fetch(`${BACKEND}/approvals/${approvalId}/${action}`, { method: "POST" })
@@ -392,50 +563,135 @@ function RightRail() {
       .catch(() => undefined);
   };
 
-  const panel = useMemo(() => {
-    if (active === "Experts") return ["Consulted Finance", "Consulted Operations", "Red-team pass complete"];
-    if (active === "Sources") return ["Q1 board memo", "Pricing dashboard", "Pipeline exports"];
-    if (active === "Artifacts") return ["Exec summary", "Action checklist", "Risk table"];
-    if (active === "Run") return ["State: completed", "Latency: 2.4s", "Confidence: 0.72"];
-    return ["Active workspace: Default", "Pinned memory: ROI discipline", "Mode: Ask/Plan/Act"];
-  }, [active]);
+  const toggle = (section: string) =>
+    setExpanded((prev) => ({ ...prev, [section]: !prev[section] }));
+
+  // Agent key → display name (matches runtime.py _AGENT_DISPLAY_NAMES)
+  const DISPLAY_NAMES: Record<string, string> = {
+    chief_of_staff_strategist: "Chief of Staff",
+    finance: "Finance",
+    legal_compliance: "Legal / Compliance",
+    hr_people: "HR & People",
+    marketing_brand: "Marketing & Brand",
+    sales_revenue: "Sales & Revenue",
+    operations: "Operations",
+    technology: "Technology",
+    risk_management: "Risk Management",
+    customer_success_support: "Customer Success",
+    project_manager: "Project Manager",
+    data_analyst: "Data Analyst",
+    writer_scribe: "Writer / Scribe",
+    executive_coach: "Executive Coach",
+    ai_strategy: "AI Strategy",
+    internal_comms: "Internal Comms",
+    public_relations: "Public Relations",
+    mergers_acquisitions: "M&A",
+    okr_coach: "OKR Coach",
+  };
 
   return (
-    <aside className="right-rail" aria-label="Context and trust details">
-      <nav aria-label="Right rail tabs">
-        {tabs.map((tab) => (
-          <button key={tab} className={active === tab ? "active" : ""} onClick={() => setActive(tab)}>
-            {tab}
-          </button>
-        ))}
-      </nav>
-      {active === "Approvals" ? (
-        <div className="approvals-panel">
-          {approvalsLoading ? (
-            <p>Loading...</p>
-          ) : approvals.length === 0 ? (
-            <p>No pending approvals</p>
-          ) : (
-            <ul>
-              {approvals.map((approval) => (
-                <li key={approval.approval_id} className="approval-item">
-                  <span className="approval-type">{approval.request_type}</span>
-                  <div className="approval-actions">
-                    <button onClick={() => handleApproval(approval.approval_id, "approve")}>Approve</button>
-                    <button onClick={() => handleApproval(approval.approval_id, "reject")}>Reject</button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ) : (
-        <ul>
-          {panel.map((item) => (
-            <li key={item}>{item}</li>
-          ))}
-        </ul>
-      )}
+    <aside className="right-rail right-rail-scroll" aria-label="Context and trust details">
+      {sections.map((section) => {
+        const isExpanded = expanded[section] ?? false;
+
+        return (
+          <div key={section} className="rail-section">
+            <button
+              className="rail-section-header"
+              onClick={() => toggle(section)}
+              aria-expanded={isExpanded}
+            >
+              <span className="rail-section-title">{section}</span>
+              {section === "Approvals" && approvals.length > 0 && (
+                <span className="badge badge-warning" style={{ fontSize: "0.6875rem" }}>
+                  {approvals.length}
+                </span>
+              )}
+              <span className="rail-section-chevron" aria-hidden="true">
+                {isExpanded ? "▾" : "▸"}
+              </span>
+            </button>
+
+            {isExpanded && (
+              <div className="rail-section-body">
+                {section === "This Response" && (
+                  lastRunMeta ? (
+                    <div className="run-status">
+                      <div className="run-status-row">
+                        <span className="badge badge-success">Completed</span>
+                        <span className="run-confidence">{confidenceLabel(lastRunMeta.confidence)}</span>
+                      </div>
+                      <p className="run-summary">
+                        Friday consulted {lastRunMeta.agents.length} specialist{lastRunMeta.agents.length !== 1 ? "s" : ""}.
+                      </p>
+                      {isDev && (
+                        <p className="run-dev-info">
+                          Confidence: {(lastRunMeta.confidence * 100).toFixed(0)}%
+                          {lastRunMeta.latency != null && ` · ${lastRunMeta.latency.toFixed(1)}s`}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="rail-empty">No response yet in this thread.</p>
+                  )
+                )}
+
+                {section === "Experts Consulted" && (
+                  lastRunMeta && lastRunMeta.agents.length > 0 ? (
+                    <ul className="rail-list">
+                      {lastRunMeta.agents.map((a) => (
+                        <li key={a} className="rail-list-item">
+                          {DISPLAY_NAMES[a] ?? a}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="rail-empty">No specialists consulted yet.</p>
+                  )
+                )}
+
+                {section === "Sources" && (
+                  <p className="rail-empty">No sources referenced.</p>
+                )}
+
+                {section === "Artifacts" && (
+                  <p className="rail-empty">No artifacts produced yet.</p>
+                )}
+
+                {section === "Approvals" && (
+                  approvalsLoading ? (
+                    <p className="rail-empty">Loading…</p>
+                  ) : approvals.length === 0 ? (
+                    <p className="rail-empty">No pending approvals.</p>
+                  ) : (
+                    <ul>
+                      {approvals.map((approval) => (
+                        <li key={approval.approval_id} className="approval-item">
+                          <span className="approval-type">{approval.request_type}</span>
+                          <div className="approval-actions">
+                            <button
+                              className="btn btn-primary btn-sm"
+                              onClick={() => handleApproval(approval.approval_id, "approve")}
+                            >
+                              Approve
+                            </button>
+                            <button
+                              className="btn btn-danger btn-sm"
+                              onClick={() => handleApproval(approval.approval_id, "reject")}
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </aside>
   );
 }
@@ -459,6 +715,20 @@ export function Workspace() {
     contextChips
   } = useChatState();
 
+  // Track last-run metadata for the right rail
+  const lastRunMeta = useMemo(() => {
+    const fridayMessages = messages.filter((m) => m.role === "friday" && m.text);
+    if (fridayMessages.length === 0) return null;
+    const last = fridayMessages[fridayMessages.length - 1];
+    const meta = last.meta as { agents?: string[]; confidence?: number; latency?: number } | undefined;
+    if (!meta) return null;
+    return {
+      agents: meta.agents ?? [],
+      confidence: meta.confidence ?? 0.72,
+      latency: meta.latency,
+    };
+  }, [messages]);
+
   const activeThread = threads.find((thread) => thread.id === activeThreadId) ?? threads[0];
   const showReload = !!process.env.NEXT_PUBLIC_ADMIN_API_KEY;
   const [reloadState, setReloadState] = useState<"idle" | "loading" | "ok" | "error">("idle");
@@ -472,8 +742,6 @@ export function Workspace() {
   };
 
   const handleDelete = (threadId: string) => {
-    const ok = window.confirm("Delete this conversation?");
-    if (!ok) return;
     deleteThread(threadId);
   };
 
@@ -511,9 +779,7 @@ export function Workspace() {
         <header className="topbar">
           <h1>{activeThread?.title ?? "Friday"}</h1>
           <div className="topbar-meta">
-            <p role="status" aria-live="polite">
-              Connection: {connectionState}
-            </p>
+            <StatusDot state={connectionState} />
             {showReload && (
               <>
                 <button
@@ -544,7 +810,7 @@ export function Workspace() {
           disabled={connectionState === "offline"}
         />
       </section>
-      <RightRail />
+      <RightRail lastRunMeta={lastRunMeta} />
     </main>
   );
 }

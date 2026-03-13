@@ -157,6 +157,7 @@ export default function DocumentsPage() {
           })}
         </ul>
       )}
-    </main>
+    </div>
+    </PageShell>
   );
 }

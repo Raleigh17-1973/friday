@@ -2,16 +2,28 @@
 
 import React from "react";
 import Link from "next/link";
+import {
+  BarChart2,
+  FileText,
+  Folders,
+  MessageSquare,
+  Settings,
+  Target,
+  Workflow,
+  type LucideIcon,
+} from "lucide-react";
 
-// LeftRail nav items — mirrors workspace.tsx navigation
-const NAV_ITEMS = [
-  { href: "/", icon: "💬", label: "Chat" },
-  { href: "/processes", icon: "⚙️", label: "Processes" },
-  { href: "/documents", icon: "📄", label: "Documents" },
-  { href: "/analytics", icon: "📊", label: "Analytics" },
-  { href: "/okrs", icon: "🎯", label: "OKRs" },
-  { href: "/workspaces", icon: "🗂️", label: "Workspaces" },
-  { href: "/settings", icon: "⚙️", label: "Settings" },
+// ── Nav items — must mirror workspace.tsx NAV_ITEMS (plus Chat entry) ────
+type NavItem = { href: string; icon: LucideIcon; label: string };
+
+const NAV_ITEMS: NavItem[] = [
+  { href: "/",           icon: MessageSquare, label: "Chat"           },
+  { href: "/processes",  icon: Workflow,      label: "Process Library" },
+  { href: "/documents",  icon: FileText,      label: "Documents"       },
+  { href: "/analytics",  icon: BarChart2,     label: "Analytics"       },
+  { href: "/okrs",       icon: Target,        label: "OKRs"            },
+  { href: "/workspaces", icon: Folders,       label: "Workspaces"      },
+  { href: "/settings",   icon: Settings,      label: "Settings"        },
 ];
 
 interface BreadcrumbItem {
@@ -77,12 +89,12 @@ export function PageShell({
         </div>
 
         {/* Nav Links */}
-        {NAV_ITEMS.map((item) => {
-          const isActive = currentPath === item.href || (item.href !== "/" && currentPath.startsWith(item.href));
+        {NAV_ITEMS.map(({ href, icon: Icon, label }) => {
+          const isActive = currentPath === href || (href !== "/" && currentPath.startsWith(href));
           return (
             <Link
-              key={item.href}
-              href={item.href}
+              key={href}
+              href={href}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -98,8 +110,13 @@ export function PageShell({
                 transition: "background 0.15s, color 0.15s",
               }}
             >
-              <span style={{ fontSize: "1rem" }}>{item.icon}</span>
-              {item.label}
+              <Icon
+                size={16}
+                strokeWidth={1.75}
+                aria-hidden="true"
+                color={isActive ? "var(--accent)" : "var(--text-muted)"}
+              />
+              {label}
             </Link>
           );
         })}
