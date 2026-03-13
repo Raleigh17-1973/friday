@@ -74,7 +74,7 @@ class DigestService:
             decisions_made=decisions_made,
             top_risks=top_risks,
             wins=[f"OKR on track: {o['title']}" for o in objectives if o.get("status") == "on_track"][:3],
-            next_week_focus=[r["title"] for r in top_risks[:3]] if top_risks else ["Review OKR progress"],
+            next_week_focus=top_risks[:3] if top_risks else ["Review OKR progress"],
             created_at=datetime.utcnow().isoformat() + "Z",
         )
 

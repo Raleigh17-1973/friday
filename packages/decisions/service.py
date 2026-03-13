@@ -104,9 +104,9 @@ class DecisionLogService:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """SELECT * FROM decisions
-                   WHERE org_id = ? AND (title LIKE ? OR context LIKE ? OR rationale LIKE ?)
+                   WHERE org_id = ? AND (title LIKE ? OR context LIKE ? OR rationale LIKE ? OR tags LIKE ?)
                    ORDER BY made_at DESC LIMIT ?""",
-                (org_id, f"%{query}%", f"%{query}%", f"%{query}%", limit),
+                (org_id, f"%{query}%", f"%{query}%", f"%{query}%", f"%{query}%", limit),
             ).fetchall()
         return [self._row_to_decision(r) for r in rows]
 
