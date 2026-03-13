@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ChatMode, ConnectionState, ConversationThread, FridayMessage } from "@/lib/types";
 
@@ -13,11 +12,20 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+// Strip common filler prefixes before making a title, then break at a word boundary.
+const FILLER_RE = /^(please\s+|can you\s+|could you\s+|i want to\s+|i need to\s+|i'd like to\s+|i would like to\s+|help me\s+|help me to\s+)/i;
+
 function titleFromText(text: string) {
-  const trimmed = text.trim();
+  const trimmed = text.trim().replace(/\s+/g, " ");
   if (!trimmed) return "New chat";
-  const normalized = trimmed.replace(/\s+/g, " ");
-  return normalized.length > 42 ? `${normalized.slice(0, 42)}…` : normalized;
+  // Strip filler prefix so titles are more meaningful
+  const stripped = trimmed.replace(FILLER_RE, "");
+  const candidate = stripped.charAt(0).toUpperCase() + stripped.slice(1);
+  if (candidate.length <= 52) return candidate;
+  // Break at last word boundary before char 52
+  const cut = candidate.slice(0, 52);
+  const lastSpace = cut.lastIndexOf(" ");
+  return lastSpace > 18 ? `${cut.slice(0, lastSpace)}…` : `${cut}…`;
 }
 
 const STORAGE_KEY = "friday_web_state_v1";
@@ -29,6 +37,8 @@ type PersistedState = {
   messagesByThread: Record<string, FridayMessage[]>;
   mode: ChatMode;
   contextChips: string[];
+  activeWorkspaceId: string;
+  activeWorkspaceName: string;
 };
 
 export function useChatState() {
@@ -48,7 +58,8 @@ export function useChatState() {
   const [connectionState, setConnectionState] = useState<ConnectionState>("connected");
   const [mode, setMode] = useState<ChatMode>("ask");
   const [progress, setProgress] = useState("Ready");
-  const [contextChips] = useState<string[]>(["Workspace: Default"]);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState("default");
+  const [activeWorkspaceName, setActiveWorkspaceName] = useState("Default");
   const controllerRef = useRef<AbortController | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
@@ -77,6 +88,10 @@ export function useChatState() {
       if (parsed.mode) {
         setMode(parsed.mode);
       }
+      if (parsed.activeWorkspaceId) {
+        setActiveWorkspaceId(parsed.activeWorkspaceId);
+        setActiveWorkspaceName(parsed.activeWorkspaceName ?? "Default");
+      }
       setHydrated(true);
     } catch {
       setHydrated(true);
@@ -90,10 +105,12 @@ export function useChatState() {
       activeThreadId,
       messagesByThread,
       mode,
-      contextChips,
+      contextChips: [],
+      activeWorkspaceId,
+      activeWorkspaceName,
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [hydrated, threads, activeThreadId, messagesByThread, mode, contextChips]);
+  }, [hydrated, threads, activeThreadId, messagesByThread, mode, activeWorkspaceId, activeWorkspaceName]);
 
   const canSend = useMemo(() => !isStreaming && connectionState !== "offline", [isStreaming, connectionState]);
 
@@ -164,6 +181,21 @@ export function useChatState() {
     setProgress("Stopped");
   };
 
+  // Send feedback (thumbs up/down) for a completed run
+  const sendFeedback = useCallback((runId: string, approved: boolean) => {
+    fetch(`${BACKEND}/runs/${runId}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approved, notes: "" }),
+    }).catch(() => undefined);
+  }, []);
+
+  // Set active workspace
+  const setActiveWorkspace = useCallback((wsId: string, wsName: string) => {
+    setActiveWorkspaceId(wsId);
+    setActiveWorkspaceName(wsName);
+  }, []);
+
   const send = async (input: string) => {
     const text = input.trim();
     if (!text || !canSend) return;
@@ -192,6 +224,9 @@ export function useChatState() {
     const controller = new AbortController();
     controllerRef.current = controller;
 
+    // Snapshot current message count to detect "first exchange"
+    const msgsBefore = (messagesByThread[threadId] ?? []).length;
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -201,6 +236,7 @@ export function useChatState() {
           org_id: "web-org",
           conversation_id: threadId,
           message: text,
+          workspace_id: activeWorkspaceId !== "default" ? activeWorkspaceId : undefined,
           context_packet: { mode }
         }),
         signal: controller.signal
@@ -233,6 +269,9 @@ export function useChatState() {
             text?: string;
             label?: string;
             message?: string;
+            run_id?: string;
+            selected_agents?: string[];
+            confidence?: number;
             generated_document?: {
               file_id: string;
               filename: string;
@@ -251,11 +290,18 @@ export function useChatState() {
               prev.map((msg) => (msg.id === runMsgId ? { ...msg, text: `${msg.text}${data.text}` } : msg))
             );
           }
-          if (eventName === "response.completed" && data.generated_document) {
+          if (eventName === "response.completed") {
+            // Capture run metadata into the message so the right panel and action bar can use it
+            const metaUpdate: Record<string, unknown> = {};
+            if (data.run_id) metaUpdate.run_id = data.run_id;
+            if (data.selected_agents) metaUpdate.agents = data.selected_agents;
+            if (data.confidence != null) metaUpdate.confidence = data.confidence;
+            if (data.generated_document) metaUpdate.generated_document = data.generated_document;
+
             updateThreadMessages(threadId, (prev) =>
               prev.map((msg) =>
                 msg.id === runMsgId
-                  ? { ...msg, meta: { ...msg.meta, generated_document: data.generated_document } }
+                  ? { ...msg, meta: { ...msg.meta, ...metaUpdate } }
                   : msg
               )
             );
@@ -275,6 +321,17 @@ export function useChatState() {
 
       touchThread(threadId);
       setProgress("Completed");
+
+      // Auto-generate a smarter title after the very first exchange in a new thread
+      // msgsBefore === 0 means this was a fresh thread with no prior messages
+      if (msgsBefore === 0) {
+        const currentThread = threads.find((t) => t.id === threadId);
+        if (currentThread && (currentThread.title === "New chat" || currentThread.title === titleFromText(text))) {
+          // The titleFromText already ran on send — it already improved the title.
+          // If backend title generation is desired in future, fire it here as a background task.
+          // For now, the word-boundary-aware titleFromText is good enough.
+        }
+      }
     } catch (error) {
       setConnectionState("degraded");
       setProgress("Error");
@@ -308,6 +365,9 @@ export function useChatState() {
     setMode,
     progress,
     connectionState,
-    contextChips
+    activeWorkspaceId,
+    activeWorkspaceName,
+    setActiveWorkspace,
+    sendFeedback,
   };
 }

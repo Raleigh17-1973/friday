@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart2,
+  ChevronDown,
   FileText,
   Folders,
   Settings,
@@ -31,8 +32,7 @@ const DocumentCard = dynamic(
 );
 
 // ── Mermaid fence parser ───────────────────────────────────────────────────
-// Splits a message string into alternating text / mermaid segments.
-type TextSegment   = { kind: "text"; content: string };
+type TextSegment    = { kind: "text"; content: string };
 type DiagramSegment = { kind: "diagram"; code: string };
 type Segment = TextSegment | DiagramSegment;
 
@@ -73,11 +73,11 @@ const NAV_ITEMS: NavItem[] = [
 
 // ── Status dot ────────────────────────────────────────────────────────────
 function StatusDot({ state }: { state: string }) {
-  const isConnected  = state === "connected";
-  const isDegraded   = state === "connecting" || state === "reconnecting";
-  const dotClass     = isConnected ? "status-dot-green"
-                     : isDegraded  ? "status-dot-amber"
-                     : "status-dot-red";
+  const isConnected = state === "connected";
+  const isDegraded  = state === "connecting" || state === "reconnecting";
+  const dotClass    = isConnected ? "status-dot-green"
+                    : isDegraded  ? "status-dot-amber"
+                    : "status-dot-red";
 
   return (
     <span className="status-dot-wrap" title={`Connection: ${state}`}>
@@ -100,7 +100,7 @@ function LeftRail({
   onSelect,
   onCreate,
   onRename,
-  onDelete
+  onDelete,
 }: {
   threads: ConversationThread[];
   activeThreadId: string;
@@ -111,7 +111,6 @@ function LeftRail({
 }) {
   const [query, setQuery] = useState("");
   const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([]);
-  // Per-thread context menu state: threadId → "menu" | "confirm-delete" | null
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
@@ -128,7 +127,7 @@ function LeftRail({
       .catch(() => {});
   }, []);
 
-  // Close menu when clicking outside
+  // Close menu on outside click
   useEffect(() => {
     if (!menuOpen) return;
     const close = () => setMenuOpen(null);
@@ -198,7 +197,6 @@ function LeftRail({
                 {thread.title}
               </button>
 
-              {/* Context menu trigger — visible on hover via CSS */}
               <button
                 className="thread-menu-btn"
                 aria-label={`Options for ${thread.title}`}
@@ -207,7 +205,6 @@ function LeftRail({
                 ···
               </button>
 
-              {/* Dropdown menu */}
               {menuOpen === thread.id && (
                 <div className="thread-menu" role="menu" onClick={(e) => e.stopPropagation()}>
                   <button
@@ -227,21 +224,14 @@ function LeftRail({
                 </div>
               )}
 
-              {/* Inline delete confirmation */}
               {confirmDelete === thread.id && (
                 <div className="thread-delete-confirm" onClick={(e) => e.stopPropagation()}>
                   <span className="thread-delete-msg">Delete this thread? This cannot be undone.</span>
                   <div className="thread-delete-actions">
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => setConfirmDelete(null)}
-                    >
+                    <button className="btn btn-secondary btn-sm" onClick={() => setConfirmDelete(null)}>
                       Cancel
                     </button>
-                    <button
-                      className="btn btn-danger btn-sm"
-                      onClick={() => handleDeleteConfirm(thread.id)}
-                    >
+                    <button className="btn btn-danger btn-sm" onClick={() => handleDeleteConfirm(thread.id)}>
                       Delete
                     </button>
                   </div>
@@ -307,20 +297,47 @@ function LeftRail({
   );
 }
 
-function MessageRow({ message }: { message: FridayMessage }) {
+function MessageRow({
+  message,
+  precedingUserText,
+  onRegenerate,
+  onFeedback,
+}: {
+  message: FridayMessage;
+  precedingUserText?: string;
+  onRegenerate?: (text: string) => void;
+  onFeedback?: (runId: string, approved: boolean) => void;
+}) {
   const isFriday = message.role === "friday";
   const segments = isFriday ? parseSegments(message.text) : null;
   const [copied, setCopied] = useState(false);
+  const [vote, setVote] = useState<"up" | "down" | null>(null);
+
   const genDoc = message.meta?.generated_document as {
     file_id: string; filename: string; mime_type: string;
     size_bytes: number; format: string; download_url: string;
   } | undefined;
+
+  const runId = message.meta?.run_id as string | undefined;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(message.text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
+  };
+
+  const handleVote = (approved: boolean) => {
+    const next = approved ? "up" : "down";
+    // Toggle off if already voted
+    if (vote === next) {
+      setVote(null);
+      return;
+    }
+    setVote(next);
+    if (runId && onFeedback) {
+      onFeedback(runId, approved);
+    }
   };
 
   return (
@@ -348,15 +365,36 @@ function MessageRow({ message }: { message: FridayMessage }) {
       )}
       <time dateTime={message.timestamp}>{new Date(message.timestamp).toLocaleTimeString()}</time>
 
-      {/* Hover action bar — only on AI messages */}
-      {isFriday && (
+      {/* Hover action bar — only on completed AI messages */}
+      {isFriday && message.text && (
         <div className="msg-actions" aria-label="Message actions">
-          <button
-            className="msg-action-btn"
-            onClick={handleCopy}
-            title="Copy to clipboard"
-          >
+          <button className="msg-action-btn" onClick={handleCopy} title="Copy to clipboard">
             {copied ? "✓ Copied" : "Copy"}
+          </button>
+          {precedingUserText && onRegenerate && (
+            <button
+              className="msg-action-btn"
+              onClick={() => onRegenerate(precedingUserText)}
+              title="Regenerate this response"
+            >
+              ↺ Regenerate
+            </button>
+          )}
+          <button
+            className={`msg-action-btn${vote === "up" ? " msg-action-btn-active" : ""}`}
+            onClick={() => handleVote(true)}
+            title="Good response"
+            aria-pressed={vote === "up"}
+          >
+            👍
+          </button>
+          <button
+            className={`msg-action-btn${vote === "down" ? " msg-action-btn-active" : ""}`}
+            onClick={() => handleVote(false)}
+            title="Poor response"
+            aria-pressed={vote === "down"}
+          >
+            👎
           </button>
         </div>
       )}
@@ -392,11 +430,15 @@ function ThinkingBubble({ label }: { label: string }) {
 function Transcript({
   messages,
   progress,
-  isStreaming
+  isStreaming,
+  onRegenerate,
+  onFeedback,
 }: {
   messages: FridayMessage[];
   progress: string;
   isStreaming: boolean;
+  onRegenerate: (text: string) => void;
+  onFeedback: (runId: string, approved: boolean) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [showJump, setShowJump] = useState(false);
@@ -423,12 +465,34 @@ function Transcript({
       <div className="status-bar" role="status" aria-live="polite">
         {progress}
       </div>
-      <div className="transcript" role="log" aria-live="polite" aria-relevant="additions text" onScroll={onScroll} ref={containerRef}>
-        {messages.map((message) => {
+      <div
+        className="transcript"
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions text"
+        onScroll={onScroll}
+        ref={containerRef}
+      >
+        {messages.map((message, idx) => {
           if (showThinking && message.id === lastMsg.id) {
             return <ThinkingBubble key={message.id} label={progress} />;
           }
-          return <MessageRow key={message.id} message={message} />;
+          // Find the user message immediately preceding this AI message
+          const usersBefore = messages.slice(0, idx).filter((m) => m.role === "user");
+          const precedingUserText =
+            message.role === "friday" && usersBefore.length > 0
+              ? usersBefore[usersBefore.length - 1].text
+              : undefined;
+
+          return (
+            <MessageRow
+              key={message.id}
+              message={message}
+              precedingUserText={precedingUserText}
+              onRegenerate={onRegenerate}
+              onFeedback={onFeedback}
+            />
+          );
         })}
       </div>
       {showJump && (
@@ -440,22 +504,97 @@ function Transcript({
   );
 }
 
+// ── Workspace picker ──────────────────────────────────────────────────────
+function WorkspacePicker({
+  activeId,
+  activeName,
+  onSelect,
+}: {
+  activeId: string;
+  activeName: string;
+  onSelect: (id: string, name: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([]);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetch(`${BACKEND}/workspaces?org_id=default`)
+      .then((r) => r.ok ? r.json() : [])
+      .then((data: WorkspaceItem[]) => setWorkspaces(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  return (
+    <div className="workspace-picker" ref={ref}>
+      <button
+        className="workspace-picker-btn"
+        onClick={() => setOpen((v) => !v)}
+        title="Switch workspace"
+        type="button"
+      >
+        <span className="workspace-picker-dot" />
+        <span className="workspace-picker-name">{activeName}</span>
+        <ChevronDown size={12} strokeWidth={2} aria-hidden="true" />
+      </button>
+
+      {open && (
+        <div className="workspace-picker-dropdown">
+          <div className="workspace-picker-label">Switch workspace</div>
+          {[{ workspace_id: "default", name: "Default", icon: "🏠", color: "#6366f1", slug: "default" }, ...workspaces].map((ws) => (
+            <button
+              key={ws.workspace_id}
+              className={`workspace-picker-item${ws.workspace_id === activeId ? " workspace-picker-item-active" : ""}`}
+              onClick={() => { onSelect(ws.workspace_id, ws.name); setOpen(false); }}
+              type="button"
+            >
+              <span
+                style={{
+                  width: 8, height: 8, borderRadius: "50%",
+                  background: ws.color || "#6366f1", flexShrink: 0,
+                }}
+              />
+              {ws.icon} {ws.name}
+            </button>
+          ))}
+          <a href="/workspaces" className="workspace-picker-new">
+            + Manage workspaces
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Composer({
   onSend,
   onStop,
   streaming,
   mode,
   setMode,
-  chips,
-  disabled
+  disabled,
+  activeWorkspaceId,
+  activeWorkspaceName,
+  onWorkspaceSelect,
 }: {
   onSend: (text: string) => void;
   onStop: () => void;
   streaming: boolean;
   mode: ChatMode;
   setMode: (m: ChatMode) => void;
-  chips: string[];
   disabled: boolean;
+  activeWorkspaceId: string;
+  activeWorkspaceName: string;
+  onWorkspaceSelect: (id: string, name: string) => void;
 }) {
   const [value, setValue] = useState("");
 
@@ -473,7 +612,6 @@ function Composer({
 
   return (
     <form className="composer" onSubmit={submit}>
-      {/* Segmented mode control — moved into toolbar row */}
       <label htmlFor="composer-input" className="sr-only">
         Message Friday
       </label>
@@ -482,42 +620,52 @@ function Composer({
         rows={2}
         value={value}
         onChange={(e) => setValue(e.target.value)}
-        placeholder="Ask Friday anything about your business…"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey && !streaming) {
+            e.preventDefault();
+            if (value.trim()) { onSend(value); setValue(""); }
+          }
+        }}
+        placeholder="Ask Friday anything about your business… (Enter to send, Shift+Enter for newline)"
       />
-      <div className="chips" aria-label="Context chips">
-        {chips.map((chip) => (
-          <span key={chip}>{chip}</span>
-        ))}
-      </div>
       <div className="composer-actions">
-        {/* Segmented control — left side */}
-        <div className="segmented-control" role="radiogroup" aria-label="Execution mode">
-          {(["ask", "plan", "act"] as ChatMode[]).map((opt) => (
-            <button
-              key={opt}
-              type="button"
-              role="radio"
-              aria-checked={mode === opt}
-              className={`segmented-btn${mode === opt ? " segmented-btn-active" : ""}`}
-              title={MODE_TOOLTIPS[opt]}
-              onClick={() => setMode(opt)}
-            >
-              {opt.toUpperCase()}
-            </button>
-          ))}
+        {/* Left: mode control + workspace picker */}
+        <div className="composer-actions-left">
+          <div className="segmented-control" role="radiogroup" aria-label="Execution mode">
+            {(["ask", "plan", "act"] as ChatMode[]).map((opt) => (
+              <button
+                key={opt}
+                type="button"
+                role="radio"
+                aria-checked={mode === opt}
+                className={`segmented-btn${mode === opt ? " segmented-btn-active" : ""}`}
+                title={MODE_TOOLTIPS[opt]}
+                onClick={() => setMode(opt)}
+              >
+                {opt.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <WorkspacePicker
+            activeId={activeWorkspaceId}
+            activeName={activeWorkspaceName}
+            onSelect={onWorkspaceSelect}
+          />
         </div>
 
-        <button type="button">Attach</button>
-        <button type="button">/ Commands</button>
-        {!streaming ? (
-          <button type="submit" disabled={!value.trim() || disabled}>
-            Send
-          </button>
-        ) : (
-          <button type="button" onClick={onStop}>
-            Stop
-          </button>
-        )}
+        {/* Right: send controls */}
+        <div className="composer-actions-right">
+          <button type="button">/ Commands</button>
+          {!streaming ? (
+            <button type="submit" disabled={!value.trim() || disabled}>
+              Send
+            </button>
+          ) : (
+            <button type="button" onClick={onStop}>
+              Stop
+            </button>
+          )}
+        </div>
       </div>
     </form>
   );
@@ -531,14 +679,17 @@ type Approval = {
   created_at: string;
 };
 
-// Confidence → human-readable label
 function confidenceLabel(score: number): string {
   if (score >= 0.85) return "High confidence";
   if (score >= 0.65) return "Moderate confidence";
   return "Review recommended";
 }
 
-function RightRail({ lastRunMeta }: { lastRunMeta: { agents: string[]; confidence: number; latency?: number } | null }) {
+function RightRail({
+  lastRunMeta,
+}: {
+  lastRunMeta: { agents: string[]; confidence: number; latency?: number } | null;
+}) {
   const sections = ["This Response", "Experts Consulted", "Sources", "Artifacts", "Approvals"];
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     "This Response": true,
@@ -566,27 +717,26 @@ function RightRail({ lastRunMeta }: { lastRunMeta: { agents: string[]; confidenc
   const toggle = (section: string) =>
     setExpanded((prev) => ({ ...prev, [section]: !prev[section] }));
 
-  // Agent key → display name (matches runtime.py _AGENT_DISPLAY_NAMES)
   const DISPLAY_NAMES: Record<string, string> = {
     chief_of_staff_strategist: "Chief of Staff",
-    finance: "Finance",
-    legal_compliance: "Legal / Compliance",
-    hr_people: "HR & People",
-    marketing_brand: "Marketing & Brand",
-    sales_revenue: "Sales & Revenue",
-    operations: "Operations",
-    technology: "Technology",
-    risk_management: "Risk Management",
-    customer_success_support: "Customer Success",
-    project_manager: "Project Manager",
-    data_analyst: "Data Analyst",
-    writer_scribe: "Writer / Scribe",
-    executive_coach: "Executive Coach",
-    ai_strategy: "AI Strategy",
-    internal_comms: "Internal Comms",
-    public_relations: "Public Relations",
-    mergers_acquisitions: "M&A",
-    okr_coach: "OKR Coach",
+    finance:                   "Finance",
+    legal_compliance:          "Legal / Compliance",
+    hr_people:                 "HR & People",
+    marketing_brand:           "Marketing & Brand",
+    sales_revenue:             "Sales & Revenue",
+    operations:                "Operations",
+    technology:                "Technology",
+    risk_management:           "Risk Management",
+    customer_success_support:  "Customer Success",
+    project_manager:           "Project Manager",
+    data_analyst:              "Data Analyst",
+    writer_scribe:             "Writer / Scribe",
+    executive_coach:           "Executive Coach",
+    ai_strategy:               "AI Strategy",
+    internal_comms:            "Internal Comms",
+    public_relations:          "Public Relations",
+    mergers_acquisitions:      "M&A",
+    okr_coach:                 "OKR Coach",
   };
 
   return (
@@ -712,18 +862,21 @@ export function Workspace() {
     setMode,
     progress,
     connectionState,
-    contextChips
+    activeWorkspaceId,
+    activeWorkspaceName,
+    setActiveWorkspace,
+    sendFeedback,
   } = useChatState();
 
-  // Track last-run metadata for the right rail
+  // Derive last-run metadata from the last AI message's stored meta
   const lastRunMeta = useMemo(() => {
     const fridayMessages = messages.filter((m) => m.role === "friday" && m.text);
     if (fridayMessages.length === 0) return null;
     const last = fridayMessages[fridayMessages.length - 1];
     const meta = last.meta as { agents?: string[]; confidence?: number; latency?: number } | undefined;
-    if (!meta) return null;
+    if (!meta?.agents) return null;
     return {
-      agents: meta.agents ?? [],
+      agents: meta.agents,
       confidence: meta.confidence ?? 0.72,
       latency: meta.latency,
     };
@@ -739,10 +892,6 @@ export function Workspace() {
     const proposal = window.prompt("Rename conversation", current?.title ?? "");
     if (!proposal) return;
     renameThread(threadId, proposal);
-  };
-
-  const handleDelete = (threadId: string) => {
-    deleteThread(threadId);
   };
 
   const handleReloadRuntime = async () => {
@@ -773,7 +922,7 @@ export function Workspace() {
         onSelect={setActiveThreadId}
         onCreate={createThread}
         onRename={handleRename}
-        onDelete={handleDelete}
+        onDelete={deleteThread}
       />
       <section className="center-pane" aria-label="Conversation">
         <header className="topbar">
@@ -799,15 +948,23 @@ export function Workspace() {
             )}
           </div>
         </header>
-        <Transcript messages={messages} progress={progress} isStreaming={isStreaming} />
+        <Transcript
+          messages={messages}
+          progress={progress}
+          isStreaming={isStreaming}
+          onRegenerate={send}
+          onFeedback={sendFeedback}
+        />
         <Composer
           onSend={send}
           onStop={stop}
           streaming={isStreaming}
           mode={mode}
           setMode={setMode}
-          chips={contextChips}
           disabled={connectionState === "offline"}
+          activeWorkspaceId={activeWorkspaceId}
+          activeWorkspaceName={activeWorkspaceName}
+          onWorkspaceSelect={setActiveWorkspace}
         />
       </section>
       <RightRail lastRunMeta={lastRunMeta} />
