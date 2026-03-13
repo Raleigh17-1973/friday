@@ -12,6 +12,14 @@ from packages.memory.service import LayeredMemoryService
 from packages.process.service import ProcessService
 from packages.process.analytics import ProcessAnalytics
 from packages.process.repository import SQLiteProcessRepository
+from packages.storage import FileStorageService
+from packages.credentials import CredentialService
+from packages.templates import TemplateService
+from packages.analytics import KPIService, ChartService
+from packages.okrs import OKRService
+from packages.finance import InvoiceService, BudgetService
+from packages.brand import BrandAssetService
+from packages.events import EventBus
 from packages.tools.mcp import MCPRegistry
 from packages.tools.policy_wrapped_tools import ToolExecutor
 from packages.tools.registry import ToolRegistry
@@ -70,6 +78,47 @@ class FridayService:
             self.workflow = InProcessWorkflowEngine(workflow_db)
         self.eval_harness = EvalHarness(self.root)
         self.reflection = ReflectionWorker()
+
+        # Phase 0 infrastructure
+        storage_dir = self.root / "data" / "files"
+        storage_db = self.root / "data" / "friday_files.sqlite3"
+        self.storage = FileStorageService(storage_dir=storage_dir, db_path=storage_db)
+
+        credentials_db = self.root / "data" / "friday_credentials.sqlite3"
+        self.credentials = CredentialService(db_path=credentials_db)
+
+        templates_db = self.root / "data" / "friday_templates.sqlite3"
+        seed_dir = self.root / "data" / "templates"
+        self.templates = TemplateService(db_path=templates_db, seed_dir=seed_dir)
+
+        # DocGenService wired after background agents create it
+        self.docgen = None
+        try:
+            from packages.docgen import DocGenService
+            self.docgen = DocGenService(storage=self.storage)
+        except Exception:
+            pass
+
+        # Phase 4: Analytics
+        analytics_db = self.root / "data" / "friday_analytics.sqlite3"
+        self.kpis = KPIService(db_path=analytics_db)
+        self.charts = ChartService()
+
+        # Phase 5: OKRs
+        okr_db = self.root / "data" / "friday_okrs.sqlite3"
+        self.okrs = OKRService(db_path=okr_db)
+
+        # Phase 6: Brand
+        brand_db = self.root / "data" / "friday_brand.sqlite3"
+        self.brand = BrandAssetService(db_path=brand_db)
+
+        # Phase 7: Finance
+        finance_db = self.root / "data" / "friday_finance.sqlite3"
+        self.invoices = InvoiceService(db_path=finance_db)
+        self.budgets = BudgetService(db_path=finance_db)
+
+        # Phase 8: Events
+        self.events = EventBus()
 
     def execute_chat_payload(self, payload: dict, upload_store: dict | None = None) -> dict:
         from packages.common.models import ChatRequest

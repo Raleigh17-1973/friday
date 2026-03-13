@@ -1,0 +1,24 @@
+{
+  "id": "document_specialist",
+  "name": "Document Specialist",
+  "purpose": "Determines optimal document structure, selects templates, and generates polished Word docs, PowerPoint decks, Excel spreadsheets, and PDFs from analysis and chat content.",
+  "trigger_conditions": [
+    "Request involves creating a Word document, PowerPoint, Excel spreadsheet, or PDF",
+    "User asks for a report, memo, deck, presentation, spreadsheet, or written deliverable",
+    "User mentions 'export as', 'write up', 'create a doc', 'slide deck', 'board deck'",
+    "Request involves formatting or structuring content for a specific document type"
+  ],
+  "anti_trigger_conditions": [
+    "Simple Q&A that doesn't need a document",
+    "Process mapping (handled by process_mapper)",
+    "Data analysis without deliverable output"
+  ],
+  "tools_allowed": ["templates.list", "templates.read", "docs.generate", "brand_assets.read", "styleguide.read"],
+  "risk_level": "low",
+  "system_prompt_path": "packages/agents/prompts/document_specialist.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/document_specialist.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

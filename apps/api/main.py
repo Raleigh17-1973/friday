@@ -643,6 +643,278 @@ def process_completeness(process_id: str) -> dict:
 
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ── File storage endpoints ────────────────────────────────────────────────────
+
+@app.get("/files")
+def list_files(org_id: str = "org-1") -> list[dict]:
+    return [f.to_dict() for f in service.storage.list_files(org_id=org_id)]
+
+
+@app.get("/files/{file_id}")
+def download_file(file_id: str):
+    try:
+        meta, content = service.storage.retrieve(file_id)
+    except (KeyError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(
+        path=meta.storage_path,
+        filename=meta.filename,
+        media_type=meta.mime_type,
+    )
+
+
+@app.delete("/files/{file_id}", status_code=204)
+def delete_file(file_id: str) -> None:
+    service.storage.delete(file_id)
+
+
+# ── Document generation endpoints ────────────────────────────────────────────
+
+
+class DocGenPayload(BaseModel):
+    title: str
+    document_type: str = "memo"
+    format: str = "docx"  # docx, pptx, xlsx, pdf
+    sections: list[dict] = []
+    metadata: dict[str, Any] = {}
+    org_id: str = "org-1"
+
+
+@app.post("/documents/generate")
+def generate_document(payload: DocGenPayload) -> dict:
+    if service.docgen is None:
+        raise HTTPException(status_code=501, detail="Document generation not available. Install python-docx, python-pptx, openpyxl.")
+    from packages.docgen.generators.base import DocumentContent, DocumentSection
+    sections = [DocumentSection(**s) for s in payload.sections]
+    content = DocumentContent(
+        title=payload.title,
+        document_type=payload.document_type,
+        sections=sections,
+        metadata=payload.metadata,
+    )
+    stored = service.docgen.generate(content, format=payload.format, org_id=payload.org_id)
+    return stored.to_dict()
+
+
+@app.get("/documents")
+def list_documents(org_id: str = "org-1") -> list[dict]:
+    files = service.storage.list_files(org_id=org_id)
+    return [f.to_dict() for f in files if f.metadata.get("format") in ("docx", "pptx", "xlsx", "pdf")]
+
+
+# ── Template endpoints ───────────────────────────────────────────────────────
+
+@app.get("/templates")
+def list_templates(org_id: str = "org-1", category: Optional[str] = None) -> list[dict]:
+    return [t.to_dict() for t in service.templates.list_templates(org_id=org_id, category=category)]
+
+
+@app.get("/templates/{template_id}")
+def get_template(template_id: str) -> dict:
+    t = service.templates.get(template_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return t.to_dict()
+
+
+# ── Credential / Integration endpoints ───────────────────────────────────────
+
+@app.get("/credentials")
+def list_credentials(org_id: str = "org-1") -> list[dict]:
+    return [c.to_dict() for c in service.credentials.list_credentials(org_id=org_id)]
+
+
+@app.get("/integrations/status")
+def integration_status(org_id: str = "org-1") -> dict:
+    """Check which integrations are connected."""
+    providers = ["google", "slack", "jira", "linear", "confluence", "notion", "salesforce", "hubspot", "gmail", "outlook"]
+    return {p: service.credentials.has_credential(p, org_id) for p in providers}
+
+
+# ── KPI / Analytics endpoints ────────────────────────────────────────────────
+
+
+class KPICreatePayload(BaseModel):
+    name: str
+    unit: str
+    target: Optional[float] = None
+    frequency: str = "monthly"
+    data_source: str = "manual"
+    org_id: str = "org-1"
+
+
+class KPIDataPayload(BaseModel):
+    value: float
+    source: str = "manual"
+
+
+@app.get("/kpis")
+def list_kpis(org_id: str = "org-1") -> list[dict]:
+    return service.kpis.kpi_status(org_id=org_id)
+
+
+@app.post("/kpis", status_code=201)
+def create_kpi(payload: KPICreatePayload) -> dict:
+    kpi = service.kpis.create_kpi(
+        name=payload.name, unit=payload.unit, target=payload.target,
+        frequency=payload.frequency, data_source=payload.data_source, org_id=payload.org_id)
+    return kpi.to_dict()
+
+
+@app.post("/kpis/{kpi_id}/data", status_code=201)
+def record_kpi_data(kpi_id: str, payload: KPIDataPayload) -> dict:
+    dp = service.kpis.record_data_point(kpi_id, value=payload.value, source=payload.source)
+    return dp.to_dict()
+
+
+@app.get("/kpis/{kpi_id}/trend")
+def kpi_trend(kpi_id: str, limit: int = 30) -> list[dict]:
+    return [dp.to_dict() for dp in service.kpis.get_trend(kpi_id, limit=limit)]
+
+
+# ── OKR endpoints ────────────────────────────────────────────────────────────
+
+
+class ObjectivePayload(BaseModel):
+    name: str
+    description: str = ""
+    period: str = "Q1 2026"
+    org_id: str = "org-1"
+
+
+class KeyResultPayload(BaseModel):
+    name: str
+    target: float
+    unit: str = "%"
+
+
+class KRProgressPayload(BaseModel):
+    current: float
+
+
+@app.get("/okrs")
+def list_okrs(org_id: str = "org-1") -> list[dict]:
+    return service.okrs.list_objectives(org_id=org_id)
+
+
+@app.post("/okrs", status_code=201)
+def create_objective(payload: ObjectivePayload) -> dict:
+    return service.okrs.create_objective(
+        name=payload.name, description=payload.description,
+        period=payload.period, org_id=payload.org_id)
+
+
+@app.post("/okrs/{obj_id}/key-results", status_code=201)
+def create_key_result(obj_id: str, payload: KeyResultPayload) -> dict:
+    return service.okrs.create_key_result(
+        objective_id=obj_id, name=payload.name, target=payload.target, unit=payload.unit)
+
+
+@app.put("/okrs/key-results/{kr_id}/progress")
+def update_kr_progress(kr_id: str, payload: KRProgressPayload) -> dict:
+    return service.okrs.update_key_result_progress(kr_id, current=payload.current)
+
+
+# ── Finance endpoints ────────────────────────────────────────────────────────
+
+
+class InvoiceItemPayload(BaseModel):
+    description: str
+    quantity: float = 1.0
+    unit_price: float = 0.0
+
+
+class InvoiceCreatePayload(BaseModel):
+    client_name: str
+    client_address: str = ""
+    items: list[InvoiceItemPayload] = []
+    tax_rate: float = 0.0
+    due_date: str = ""
+    org_id: str = "org-1"
+
+
+class BudgetCategoryPayload(BaseModel):
+    name: str
+    planned_amount: float
+    period: str = "monthly"
+    org_id: str = "org-1"
+
+
+class ExpensePayload(BaseModel):
+    category_id: str
+    amount: float
+    description: str = ""
+
+
+@app.get("/invoices")
+def list_invoices(org_id: str = "org-1") -> list[dict]:
+    return [i.to_dict() for i in service.invoices.list_invoices(org_id=org_id)]
+
+
+@app.post("/invoices", status_code=201)
+def create_invoice(payload: InvoiceCreatePayload) -> dict:
+    from packages.finance.invoice_service import InvoiceItem
+    items = [InvoiceItem(description=i.description, quantity=i.quantity, unit_price=i.unit_price)
+             for i in payload.items]
+    inv = service.invoices.create_invoice(
+        client_name=payload.client_name, client_address=payload.client_address,
+        items=items, tax_rate=payload.tax_rate, due_date=payload.due_date, org_id=payload.org_id)
+    return inv.to_dict()
+
+
+@app.get("/budget/status")
+def budget_status(org_id: str = "org-1") -> list[dict]:
+    return service.budgets.budget_status(org_id=org_id)
+
+
+@app.post("/budget/categories", status_code=201)
+def create_budget_category(payload: BudgetCategoryPayload) -> dict:
+    cat = service.budgets.create_category(
+        name=payload.name, planned_amount=payload.planned_amount,
+        period=payload.period, org_id=payload.org_id)
+    return cat.to_dict()
+
+
+@app.post("/budget/expenses", status_code=201)
+def record_expense(payload: ExpensePayload) -> dict:
+    exp = service.budgets.record_expense(
+        category_id=payload.category_id, amount=payload.amount, description=payload.description)
+    return exp.to_dict()
+
+
+# ── Brand endpoints ──────────────────────────────────────────────────────────
+
+@app.get("/brand")
+def get_brand(org_id: str = "org-1") -> dict:
+    return service.brand.get_brand_or_default(org_id=org_id)
+
+
+class BrandUpdatePayload(BaseModel):
+    primary_color: Optional[str] = None
+    secondary_color: Optional[str] = None
+    accent_color: Optional[str] = None
+    font_family: Optional[str] = None
+    company_name: Optional[str] = None
+    tagline: Optional[str] = None
+    voice_tone: Optional[str] = None
+
+
+@app.put("/brand")
+def update_brand(payload: BrandUpdatePayload, org_id: str = "org-1") -> dict:
+    changes = {k: v for k, v in payload.model_dump().items() if v is not None}
+    return service.brand.update_brand(org_id=org_id, changes=changes)
+
+
+# ── Events endpoint ──────────────────────────────────────────────────────────
+
+@app.get("/events")
+def list_events(limit: int = 50) -> list[dict]:
+    from dataclasses import asdict
+    return [asdict(e) for e in service.events.recent_events(limit=limit)]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 @app.post("/admin/runtime/reload")
 def admin_runtime_reload(request: Request) -> dict:
     admin_auth.require(request)

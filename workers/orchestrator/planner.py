@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 _PLANNER_SYSTEM = """\
 You are Friday's planning engine. Analyze the user's business request and produce a routing plan.
 
-Available specialist IDs: chief_of_staff_strategist, project_manager, finance, operations, sales_revenue, writer_scribe, research, critic_red_team, process_mapper
+Available specialist IDs: chief_of_staff_strategist, project_manager, finance, operations, sales_revenue, writer_scribe, research, critic_red_team, process_mapper, document_specialist
 
 Respond ONLY with valid JSON (no markdown fences):
 {
@@ -136,6 +136,20 @@ def build_plan(message: str, llm: "LLMProvider | None" = None) -> PlannerOutput:
     if any(token in text for token in ["research", "market", "competitor", "benchmark", "latest"]):
         specialists.append("research")
         tools.append("web.research")
+
+    # Document generation detection
+    _DOCUMENT_KEYWORDS = [
+        "word doc", "powerpoint", "pptx", "docx", "excel", "spreadsheet",
+        "pdf", "slide deck", "presentation", "board deck", "pitch deck",
+        "write up as", "export as", "as a document", "google doc", "google slides",
+        "google sheets", "make a deck", "create a report", "generate a memo",
+    ]
+    is_document_request = any(kw in text for kw in _DOCUMENT_KEYWORDS)
+    if is_document_request:
+        if "document_specialist" not in specialists:
+            specialists.append("document_specialist")
+        if "writer_scribe" not in specialists:
+            specialists.append("writer_scribe")
 
     if not domains:
         domains.append("strategy")
