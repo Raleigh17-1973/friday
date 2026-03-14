@@ -88,6 +88,9 @@ class CheckIn:
     notes: str
     created_at: str
     org_id: str
+    highlights: str = ""
+    blockers: str = ""
+    next_steps: str = ""
 
 
 class OKRService:
@@ -163,9 +166,18 @@ class OKRService:
                     status TEXT NOT NULL DEFAULT 'on_track',
                     notes TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
-                    org_id TEXT NOT NULL
+                    org_id TEXT NOT NULL,
+                    highlights TEXT NOT NULL DEFAULT '',
+                    blockers TEXT NOT NULL DEFAULT '',
+                    next_steps TEXT NOT NULL DEFAULT ''
                 );
             """)
+            # Migrate: add new columns if they don't exist (for existing DBs)
+            for col in ("highlights", "blockers", "next_steps"):
+                try:
+                    conn.execute(f"ALTER TABLE checkins ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+                except Exception:
+                    pass  # Column already exists
 
     # ---- Objectives ----
     def create_objective(
@@ -446,9 +458,10 @@ class OKRService:
 
     # ---- Check-ins ----
     def add_checkin(
-        self, objective_id: str, notes: str,
+        self, objective_id: str, notes: str = "",
         confidence: float = 0.7, status: str = "on_track",
         author: str = "user-1", org_id: str = "org-1",
+        highlights: str = "", blockers: str = "", next_steps: str = "",
     ) -> CheckIn:
         now = datetime.utcnow().isoformat() + "Z"
         checkin = CheckIn(
@@ -456,16 +469,20 @@ class OKRService:
             objective_id=objective_id, author=author,
             confidence=confidence, status=status,
             notes=notes, created_at=now, org_id=org_id,
+            highlights=highlights, blockers=blockers, next_steps=next_steps,
         )
         with sqlite3.connect(self._db_path) as conn:
             conn.execute(
-                "INSERT INTO checkins VALUES (?,?,?,?,?,?,?,?)",
+                """INSERT INTO checkins
+                   (checkin_id, objective_id, author, confidence, status, notes,
+                    created_at, org_id, highlights, blockers, next_steps)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (checkin.checkin_id, checkin.objective_id, checkin.author,
                  checkin.confidence, checkin.status, checkin.notes,
-                 checkin.created_at, checkin.org_id)
+                 checkin.created_at, checkin.org_id,
+                 checkin.highlights, checkin.blockers, checkin.next_steps)
             )
-        # Update objective confidence and status from check-in
-        with sqlite3.connect(self._db_path) as conn:
+            # Update objective confidence and status from check-in
             conn.execute(
                 "UPDATE objectives SET confidence = ?, status = ?, updated_at = ? WHERE obj_id = ?",
                 (confidence, status, now, objective_id)
@@ -476,13 +493,16 @@ class OKRService:
         with sqlite3.connect(self._db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
-                "SELECT * FROM checkins WHERE objective_id = ? ORDER BY created_at DESC LIMIT 10",
+                "SELECT * FROM checkins WHERE objective_id = ? ORDER BY created_at DESC",
                 (objective_id,)
             ).fetchall()
         return [CheckIn(
             checkin_id=r["checkin_id"], objective_id=r["objective_id"],
             author=r["author"], confidence=r["confidence"], status=r["status"],
             notes=r["notes"], created_at=r["created_at"], org_id=r["org_id"],
+            highlights=r["highlights"] if "highlights" in r.keys() else "",
+            blockers=r["blockers"] if "blockers" in r.keys() else "",
+            next_steps=r["next_steps"] if "next_steps" in r.keys() else "",
         ) for r in rows]
 
     # ---- Summary ----

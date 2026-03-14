@@ -6,6 +6,17 @@ import { PageShell } from "@/components/page-shell";
 
 const API = "http://localhost:8000";
 
+type UserRole = "member" | "tool_admin" | "dev_admin" | "developer";
+
+function loadUserRole(): UserRole {
+  if (typeof window === "undefined") return "member";
+  return (localStorage.getItem("friday_user_role") as UserRole) ?? "member";
+}
+
+function isAdmin(role: UserRole): boolean {
+  return role === "dev_admin" || role === "developer" || role === "tool_admin";
+}
+
 interface Workspace {
   workspace_id: string;
   name: string;
@@ -137,11 +148,106 @@ function NewWorkspaceModal({ onClose, onCreated }: { onClose: () => void; onCrea
   );
 }
 
+function RenameWorkspaceModal({
+  workspace,
+  onClose,
+  onRenamed,
+}: {
+  workspace: Workspace;
+  onClose: () => void;
+  onRenamed: () => void;
+}) {
+  const [name, setName] = useState(workspace.name);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch(`${API}/workspaces/${workspace.workspace_id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { detail?: string };
+        throw new Error(data.detail ?? "Failed to rename");
+      }
+      onRenamed();
+      onClose();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to rename workspace");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center" }}
+      onClick={onClose}
+    >
+      <div className="card" style={{ width: 400 }} onClick={(e) => e.stopPropagation()}>
+        <div className="card-header">
+          Rename Workspace
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+        </div>
+        <form onSubmit={submit}>
+          <div className="card-body" style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <div className="form-group">
+              <label className="form-label">New name</label>
+              <input
+                className="form-input"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoFocus
+                required
+              />
+            </div>
+            {error && <p style={{ margin: 0, fontSize: "0.8125rem", color: "var(--danger)" }}>⚠ {error}</p>}
+          </div>
+          <div className="card-footer" style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem" }}>
+            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function WorkspacesPage() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showModal, setShowModal] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<Workspace | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [userRole, setUserRole] = useState<UserRole>("member");
+
+  useEffect(() => {
+    setUserRole(loadUserRole());
+    const onRoleChange = () => setUserRole(loadUserRole());
+    window.addEventListener("friday_role_changed", onRoleChange);
+    return () => window.removeEventListener("friday_role_changed", onRoleChange);
+  }, []);
+
+  async function handleDelete(workspaceId: string) {
+    setDeleting(true);
+    try {
+      await fetch(`${API}/workspaces/${workspaceId}`, { method: "DELETE" });
+      setDeleteTarget(null);
+      await load();
+    } catch {
+      // silently retry
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -203,13 +309,56 @@ export default function WorkspacesPage() {
                     {ws.description}
                   </p>
                 )}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
                   <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
                     {ws.visibility}
                   </span>
-                  <Link href={`/workspaces/${ws.workspace_id}`} className="btn btn-secondary btn-sm">
-                    Open →
-                  </Link>
+                  <div style={{ display: "flex", gap: "0.375rem", alignItems: "center" }}>
+                    {isAdmin(userRole) && (
+                      <>
+                        {deleteTarget === ws.workspace_id ? (
+                          <span style={{ display: "flex", gap: "0.375rem", alignItems: "center" }}>
+                            <span style={{ fontSize: "0.75rem", color: "var(--danger)" }}>Delete?</span>
+                            <button
+                              className="btn btn-sm"
+                              style={{ background: "var(--danger)", color: "#fff", border: "none" }}
+                              onClick={() => handleDelete(ws.workspace_id)}
+                              disabled={deleting}
+                            >
+                              {deleting ? "…" : "Yes"}
+                            </button>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => setDeleteTarget(null)}
+                            >
+                              No
+                            </button>
+                          </span>
+                        ) : (
+                          <>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => setRenameTarget(ws)}
+                              title="Rename workspace"
+                            >
+                              ✏
+                            </button>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              style={{ color: "var(--danger)" }}
+                              onClick={() => setDeleteTarget(ws.workspace_id)}
+                              title="Delete workspace"
+                            >
+                              🗑
+                            </button>
+                          </>
+                        )}
+                      </>
+                    )}
+                    <Link href={`/workspaces/${ws.workspace_id}`} className="btn btn-secondary btn-sm">
+                      Open →
+                    </Link>
+                  </div>
                 </div>
               </div>
             </div>
@@ -218,6 +367,13 @@ export default function WorkspacesPage() {
       )}
 
       {showModal && <NewWorkspaceModal onClose={() => setShowModal(false)} onCreated={load} />}
+      {renameTarget && (
+        <RenameWorkspaceModal
+          workspace={renameTarget}
+          onClose={() => setRenameTarget(null)}
+          onRenamed={load}
+        />
+      )}
     </PageShell>
   );
 }

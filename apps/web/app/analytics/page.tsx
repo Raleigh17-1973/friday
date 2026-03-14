@@ -194,7 +194,7 @@ export default function AnalyticsPage() {
       )}
 
       {showModal && (
-        <div className="analytics-modal-backdrop" role="dialog" aria-modal="true" aria-label="Add KPI">
+        <div className="analytics-modal-overlay" role="dialog" aria-modal="true" aria-label="Add KPI">
           <div className="analytics-modal">
             <header className="analytics-modal-header">
               <h2>Add KPI</h2>

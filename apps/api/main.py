@@ -729,9 +729,15 @@ def generate_document(payload: DocGenPayload) -> dict:
 
 
 @app.get("/documents")
-def list_documents(org_id: str = "org-1") -> list[dict]:
+def list_documents(org_id: str = "org-1", workspace_id: Optional[str] = None, q: Optional[str] = None) -> list[dict]:
     files = service.storage.list_files(org_id=org_id)
-    return [f.to_dict() for f in files if f.metadata.get("format") in ("docx", "pptx", "xlsx", "pdf")]
+    results = [f.to_dict() for f in files if f.metadata.get("format") in ("docx", "pptx", "xlsx", "pdf")]
+    if workspace_id:
+        results = [r for r in results if r.get("metadata", {}).get("workspace_id") == workspace_id]
+    if q:
+        q_lower = q.strip().lower()
+        results = [r for r in results if q_lower in r.get("filename", "").lower()]
+    return results
 
 
 # ── Template endpoints ───────────────────────────────────────────────────────
@@ -769,7 +775,10 @@ def integration_status(org_id: str = "org-1") -> dict:
 class KPICreatePayload(BaseModel):
     name: str
     unit: str
-    target: Optional[float] = None
+    target_value: Optional[float] = None  # frontend uses target_value
+    target: Optional[float] = None        # legacy alias
+    direction: str = "higher_is_better"
+    category: str = ""
     frequency: str = "monthly"
     data_source: str = "manual"
     org_id: str = "org-1"
@@ -780,17 +789,52 @@ class KPIDataPayload(BaseModel):
     source: str = "manual"
 
 
+def _normalize_kpi(raw: dict) -> dict:
+    """Convert backend KPI shape → frontend KPI shape."""
+    latest = raw.get("latest_value") or 0.0
+    target = raw.get("target") or raw.get("target_value") or 0.0
+    on_target = raw.get("on_target")
+    direction = raw.get("direction", "higher_is_better")
+
+    if latest is None or latest == 0.0 and target == 0.0:
+        status = "at_risk"
+    elif direction == "higher_is_better":
+        pct = (latest / target) if target else 0
+        status = "on_track" if pct >= 0.9 else ("at_risk" if pct >= 0.7 else "behind")
+    else:
+        pct = (latest / target) if target else 0
+        status = "on_track" if pct <= 1.1 else ("at_risk" if pct <= 1.3 else "behind")
+
+    return {
+        "kpi_id": raw.get("kpi_id", ""),
+        "name": raw.get("name", ""),
+        "unit": raw.get("unit", ""),
+        "current_value": latest if latest is not None else 0.0,
+        "target_value": target,
+        "direction": direction,
+        "category": raw.get("category", ""),
+        "status": status,
+    }
+
+
 @app.get("/kpis")
 def list_kpis(org_id: str = "org-1") -> list[dict]:
-    return service.kpis.kpi_status(org_id=org_id)
+    return [_normalize_kpi(k) for k in service.kpis.kpi_status(org_id=org_id)]
 
 
 @app.post("/kpis", status_code=201)
 def create_kpi(payload: KPICreatePayload) -> dict:
+    target = payload.target_value if payload.target_value is not None else payload.target
     kpi = service.kpis.create_kpi(
-        name=payload.name, unit=payload.unit, target=payload.target,
+        name=payload.name, unit=payload.unit, target=target,
         frequency=payload.frequency, data_source=payload.data_source, org_id=payload.org_id)
-    return kpi.to_dict()
+    return _normalize_kpi({
+        **kpi.to_dict(),
+        "latest_value": 0.0,
+        "on_target": None,
+        "direction": payload.direction,
+        "category": payload.category,
+    })
 
 
 @app.post("/kpis/{kpi_id}/data", status_code=201)
@@ -905,7 +949,7 @@ class WorkspaceLinkCreate(BaseModel):
 
 @app.get("/okrs")
 def list_okrs(
-    org_id: str = "org-1",
+    org_id: str = "default",
     workspace_id: Optional[str] = None,
     level: Optional[str] = None,
     period: Optional[str] = None,
@@ -1014,26 +1058,42 @@ def create_initiative(obj_id: str, payload: InitiativeCreate) -> dict:
 
 @app.post("/okrs/{obj_id}/check-in", status_code=201)
 def okr_checkin(obj_id: str, payload: CheckInCreate) -> dict:
-    notes_parts = []
-    if payload.highlights:
-        notes_parts.append(f"Highlights: {payload.highlights}")
-    if payload.blockers:
-        notes_parts.append(f"Blockers: {payload.blockers}")
-    if payload.next_steps:
-        notes_parts.append(f"Next steps: {payload.next_steps}")
-    notes = "\n".join(notes_parts)
     obj = service.okrs.get_objective(obj_id)
     if obj is None:
         raise HTTPException(status_code=404, detail="Not found")
     checkin = service.okrs.add_checkin(
         objective_id=obj_id,
-        notes=notes,
+        notes="",
         confidence=payload.confidence,
         status=payload.status,
         author=payload.author,
         org_id=obj.org_id,
+        highlights=payload.highlights,
+        blockers=payload.blockers,
+        next_steps=payload.next_steps,
     )
     return asdict(checkin)
+
+
+class InitiativeUpdate(BaseModel):
+    status: Optional[str] = None
+    owner: Optional[str] = None
+    title: Optional[str] = None
+    due_date: Optional[str] = None
+    description: Optional[str] = None
+
+
+@app.put("/okrs/initiatives/{initiative_id}", status_code=200)
+def update_initiative(initiative_id: str, payload: InitiativeUpdate) -> dict:
+    service.okrs.update_initiative(
+        initiative_id,
+        status=payload.status,
+        owner=payload.owner,
+        title=payload.title,
+        due_date=payload.due_date,
+        description=payload.description,
+    )
+    return {"ok": True}
 
 
 @app.put("/okrs/key-results/{kr_id}/progress")
@@ -1087,6 +1147,12 @@ def archive_workspace(workspace_id: str) -> dict:
     return {"status": "archived", "workspace_id": workspace_id}
 
 
+@app.delete("/workspaces/{workspace_id}", status_code=204)
+def delete_workspace(workspace_id: str) -> None:
+    """Delete (archive) a workspace. Admin-only by convention; enforced in the frontend."""
+    service.workspaces.archive(workspace_id)
+
+
 @app.get("/workspaces/{workspace_id}/members")
 def list_workspace_members(workspace_id: str) -> list[dict]:
     members = service.workspaces.list_members(workspace_id)
@@ -1121,6 +1187,53 @@ def workspace_overview(workspace_id: str) -> dict:
         "member_count": len(members),
         "recent_okrs": [],
     }
+
+
+# ── Project endpoints ────────────────────────────────────────────────────────
+
+
+class ProjectCreate(BaseModel):
+    name: str
+    description: str = ""
+    color: str = "#6366f1"
+    icon: str = "📁"
+
+
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    color: Optional[str] = None
+    icon: Optional[str] = None
+
+
+@app.get("/workspaces/{workspace_id}/projects")
+def list_projects(workspace_id: str) -> list[dict]:
+    return [p.to_dict() for p in service.projects.list(workspace_id)]
+
+
+@app.post("/workspaces/{workspace_id}/projects", status_code=201)
+def create_project(workspace_id: str, payload: ProjectCreate) -> dict:
+    project = service.projects.create(
+        workspace_id=workspace_id,
+        name=payload.name,
+        description=payload.description,
+        color=payload.color,
+        icon=payload.icon,
+    )
+    return project.to_dict()
+
+
+@app.put("/projects/{project_id}")
+def update_project(project_id: str, payload: ProjectUpdate) -> dict:
+    project = service.projects.update(project_id, **payload.model_dump(exclude_none=True))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return project.to_dict()
+
+
+@app.delete("/projects/{project_id}", status_code=204)
+def delete_project(project_id: str) -> None:
+    service.projects.delete(project_id)
 
 
 # ── Finance endpoints ────────────────────────────────────────────────────────
@@ -1566,6 +1679,331 @@ def weekly_digest(org_id: str = "org-1") -> dict:
     result = asdict(digest)
     result["markdown"] = service.digest.digest_to_markdown(digest)
     return result
+
+
+# ── QA Test Registry ──────────────────────────────────────────────────────────
+
+class QATestCasePayload(BaseModel):
+    title: str
+    feature_area: str
+    test_type: str
+    org_id: str = "default"
+    subfeature: str = ""
+    description: str = ""
+    preconditions: str = ""
+    steps: list[str] = []
+    expected_result: str = ""
+    priority: str = "medium"
+    severity_if_fails: str = "major"
+    applies_to_agents: list[str] = []
+    applies_to_ui_surfaces: list[str] = []
+    release_blocker: bool = False
+    status: str = "draft"
+    created_by: str = "qa-specialist"
+    linked_user_story_ids: list[str] = []
+    linked_bug_ids: list[str] = []
+    linked_workspace_ids: list[str] = []
+    notes: str = ""
+    tags: list[str] = []
+
+
+class QASuitePayload(BaseModel):
+    name: str
+    suite_type: str
+    org_id: str = "default"
+    description: str = ""
+    feature_areas: list[str] = []
+    test_case_ids: list[str] = []
+    generated_by_rule: str = ""
+    owner: str = ""
+
+
+class QASuiteGeneratePayload(BaseModel):
+    name: str
+    rule: str
+    org_id: str = "default"
+    owner: str = ""
+
+
+class QARunPayload(BaseModel):
+    suite_id: str
+    title: str
+    org_id: str = "default"
+    environment: str = "development"
+    triggered_by: str = "manual"
+    run_type: str = "manual"
+    notes: str = ""
+
+
+class QAResultPayload(BaseModel):
+    test_case_id: str
+    result: str
+    findings: str = ""
+    reproduction_notes: str = ""
+    severity: Optional[str] = None
+    linked_bug_id: Optional[str] = None
+    should_become_regression: bool = False
+    tester: str = ""
+
+
+class QABugPayload(BaseModel):
+    title: str
+    org_id: str = "default"
+    severity: str = "major"
+    category: str = "functional"
+    area: str = ""
+    repro_steps: list[str] = []
+    expected_result: str = ""
+    actual_result: str = ""
+    impact: str = ""
+    recommended_fix: str = ""
+    release_blocker: bool = False
+    linked_test_case_ids: list[str] = []
+    linked_run_ids: list[str] = []
+    owner: str = ""
+
+
+class QAStoryPayload(BaseModel):
+    title: str
+    org_id: str = "default"
+    user_story: str = ""
+    context: str = ""
+    acceptance_criteria: list[str] = []
+    priority: str = "medium"
+    dependencies: list[str] = []
+    source_test_case_id: Optional[str] = None
+    source_run_id: Optional[str] = None
+
+
+# ─── Test Case Routes ────────────────────────────────────────────────────────
+
+@app.get("/qa/tests")
+def list_qa_tests(
+    org_id: str = "default",
+    feature_area: Optional[str] = None,
+    test_type: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    release_blocker: Optional[bool] = None,
+    search: Optional[str] = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> list[dict]:
+    from dataclasses import asdict
+    tests = service.qa.list_test_cases(
+        org_id=org_id, feature_area=feature_area, test_type=test_type,
+        status=status, priority=priority, release_blocker=release_blocker,
+        search=search, limit=limit, offset=offset,
+    )
+    return [asdict(t) for t in tests]
+
+
+@app.post("/qa/tests")
+def create_qa_test(payload: QATestCasePayload) -> dict:
+    from dataclasses import asdict
+    tc = service.qa.create_test_case(**payload.model_dump())
+    return asdict(tc)
+
+
+@app.get("/qa/tests/{tc_id}")
+def get_qa_test(tc_id: str) -> dict:
+    from dataclasses import asdict
+    tc = service.qa.get_test_case(tc_id)
+    if not tc:
+        raise HTTPException(status_code=404, detail="Test case not found")
+    return asdict(tc)
+
+
+@app.put("/qa/tests/{tc_id}")
+def update_qa_test(tc_id: str, updates: dict[str, Any], updated_by: str = "qa-specialist") -> dict:
+    from dataclasses import asdict
+    tc = service.qa.update_test_case(tc_id, updates, updated_by=updated_by)
+    if not tc:
+        raise HTTPException(status_code=404, detail="Test case not found")
+    return asdict(tc)
+
+
+@app.post("/qa/tests/{tc_id}/deprecate")
+def deprecate_qa_test(tc_id: str, updated_by: str = "qa-specialist") -> dict:
+    ok = service.qa.deprecate_test_case(tc_id, updated_by=updated_by)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Test case not found")
+    return {"status": "deprecated", "tc_id": tc_id}
+
+
+@app.post("/qa/tests/{tc_id}/clone")
+def clone_qa_test(tc_id: str, new_title: Optional[str] = None, created_by: str = "qa-specialist") -> dict:
+    from dataclasses import asdict
+    tc = service.qa.clone_test_case(tc_id, new_title=new_title, created_by=created_by)
+    if not tc:
+        raise HTTPException(status_code=404, detail="Test case not found")
+    return asdict(tc)
+
+
+# ─── Suite Routes ────────────────────────────────────────────────────────────
+
+@app.get("/qa/suites")
+def list_qa_suites(org_id: str = "default", status: Optional[str] = None) -> list[dict]:
+    from dataclasses import asdict
+    return [asdict(s) for s in service.qa.list_suites(org_id=org_id, status=status)]
+
+
+@app.post("/qa/suites")
+def create_qa_suite(payload: QASuitePayload) -> dict:
+    from dataclasses import asdict
+    suite = service.qa.create_suite(**payload.model_dump())
+    return asdict(suite)
+
+
+@app.get("/qa/suites/{suite_id}")
+def get_qa_suite(suite_id: str) -> dict:
+    from dataclasses import asdict
+    suite = service.qa.get_suite(suite_id)
+    if not suite:
+        raise HTTPException(status_code=404, detail="Suite not found")
+    # Enrich with full test case objects
+    result = asdict(suite)
+    result["test_cases"] = [
+        asdict(tc) for tc in [service.qa.get_test_case(tid) for tid in suite.test_case_ids]
+        if tc is not None
+    ]
+    return result
+
+
+@app.put("/qa/suites/{suite_id}")
+def update_qa_suite(suite_id: str, updates: dict[str, Any]) -> dict:
+    from dataclasses import asdict
+    suite = service.qa.update_suite(suite_id, updates)
+    if not suite:
+        raise HTTPException(status_code=404, detail="Suite not found")
+    return asdict(suite)
+
+
+@app.post("/qa/suites/generate")
+def generate_qa_suite(payload: QASuiteGeneratePayload) -> dict:
+    from dataclasses import asdict
+    suite = service.qa.generate_suite_from_rules(
+        name=payload.name, rule=payload.rule,
+        org_id=payload.org_id, owner=payload.owner,
+    )
+    return asdict(suite)
+
+
+# ─── Run Routes ──────────────────────────────────────────────────────────────
+
+@app.get("/qa/runs")
+def list_qa_runs(org_id: str = "default", suite_id: Optional[str] = None, limit: int = 50) -> list[dict]:
+    from dataclasses import asdict
+    return [asdict(r) for r in service.qa.list_runs(org_id=org_id, suite_id=suite_id, limit=limit)]
+
+
+@app.post("/qa/runs")
+def create_qa_run(payload: QARunPayload) -> dict:
+    from dataclasses import asdict
+    run = service.qa.create_test_run(**payload.model_dump())
+    return asdict(run)
+
+
+@app.get("/qa/runs/{run_id}")
+def get_qa_run(run_id: str) -> dict:
+    from dataclasses import asdict
+    run = service.qa.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    result = asdict(run)
+    result["results"] = [asdict(r) for r in service.qa.list_test_results(run_id)]
+    return result
+
+
+@app.post("/qa/runs/{run_id}/results")
+def store_qa_result(run_id: str, payload: QAResultPayload) -> dict:
+    from dataclasses import asdict
+    result = service.qa.store_test_result(run_id=run_id, **payload.model_dump())
+    return asdict(result)
+
+
+@app.post("/qa/runs/{run_id}/complete")
+def complete_qa_run(run_id: str, summary: str = "", notes: str = "") -> dict:
+    from dataclasses import asdict
+    run = service.qa.complete_test_run(run_id, summary=summary, notes=notes)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return asdict(run)
+
+
+# ─── Bug Report Routes ───────────────────────────────────────────────────────
+
+@app.get("/qa/bugs")
+def list_qa_bugs(org_id: str = "default", status: Optional[str] = None, area: Optional[str] = None) -> list[dict]:
+    from dataclasses import asdict
+    return [asdict(b) for b in service.qa.list_bug_reports(org_id=org_id, status=status, area=area)]
+
+
+@app.post("/qa/bugs")
+def create_qa_bug(payload: QABugPayload) -> dict:
+    from dataclasses import asdict
+    bug = service.qa.create_bug_report(**payload.model_dump())
+    return asdict(bug)
+
+
+@app.put("/qa/bugs/{bug_id}")
+def update_qa_bug(bug_id: str, updates: dict[str, Any]) -> dict:
+    from dataclasses import asdict
+    bug = service.qa.update_bug_report(bug_id, updates)
+    if not bug:
+        raise HTTPException(status_code=404, detail="Bug report not found")
+    return asdict(bug)
+
+
+# ─── User Story Routes ───────────────────────────────────────────────────────
+
+@app.get("/qa/stories")
+def list_qa_stories(org_id: str = "default", status: Optional[str] = None) -> list[dict]:
+    from dataclasses import asdict
+    return [asdict(s) for s in service.qa.list_user_story_candidates(org_id=org_id, status=status)]
+
+
+@app.post("/qa/stories")
+def create_qa_story(payload: QAStoryPayload) -> dict:
+    from dataclasses import asdict
+    story = service.qa.create_user_story_candidate(**payload.model_dump())
+    return asdict(story)
+
+
+# ─── Coverage Gap Analysis ───────────────────────────────────────────────────
+
+@app.get("/qa/coverage")
+def get_qa_coverage(org_id: str = "default") -> dict:
+    from dataclasses import asdict
+    report = service.qa.analyze_coverage_gaps(org_id=org_id)
+    result = asdict(report)
+    result["gaps"] = [asdict(g) for g in report.gaps]
+    return result
+
+
+# ─── Registry Summary ────────────────────────────────────────────────────────
+
+@app.get("/qa/summary")
+def get_qa_summary(org_id: str = "default") -> dict:
+    return service.qa.get_registry_summary(org_id=org_id)
+
+
+# ─── Seed Templates ──────────────────────────────────────────────────────────
+
+@app.post("/qa/templates/seed")
+def seed_qa_templates(org_id: str = "default") -> dict:
+    """Force re-seed default templates (useful after schema changes)."""
+    service.qa._seed_templates()
+    summary = service.qa.get_registry_summary(org_id=org_id)
+    return {"status": "seeded", "total": summary["total"]}
+
+
+# ─── Regression Candidates ───────────────────────────────────────────────────
+
+@app.get("/qa/regression-candidates")
+def get_regression_candidates(org_id: str = "default") -> list[dict]:
+    from dataclasses import asdict
+    return [asdict(r) for r in service.qa.get_regression_candidates(org_id=org_id)]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

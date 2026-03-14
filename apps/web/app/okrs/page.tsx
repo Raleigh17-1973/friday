@@ -49,6 +49,7 @@ type NewObjectiveForm = {
   period: string;
   description: string;
   rationale: string;
+  parent_id: string;
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -364,42 +365,47 @@ function ObjectiveRow({
           {objective.title}
         </Link>
 
-        {/* Owner */}
-        {objective.owner && (
-          <span
-            style={{
-              color: "var(--muted)",
-              fontSize: "0.78rem",
-              whiteSpace: "nowrap",
-              flexShrink: 0,
-            }}
-          >
-            {objective.owner}
-          </span>
-        )}
-
-        {/* Status badge */}
-        <Badge
-          label={objective.status}
-          cls={statusBadgeClass(objective.status)}
-        />
-
-        {/* Confidence */}
+        {/* Owner — always 80px wide to keep columns aligned */}
         <span
           style={{
+            width: 80,
+            flexShrink: 0,
+            color: "var(--muted)",
+            fontSize: "0.78rem",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {objective.owner}
+        </span>
+
+        {/* Status badge — fixed 80px wrapper */}
+        <div style={{ width: 80, flexShrink: 0 }}>
+          <Badge
+            label={objective.status}
+            cls={statusBadgeClass(objective.status)}
+          />
+        </div>
+
+        {/* Confidence — fixed 40px, right-aligned to match header */}
+        <span
+          style={{
+            width: 40,
+            flexShrink: 0,
             fontSize: "0.72rem",
             color: "var(--muted)",
             whiteSpace: "nowrap",
-            flexShrink: 0,
+            textAlign: "right",
           }}
           title={`Confidence: ${confidencePct}%`}
         >
           {confidencePct}%
         </span>
 
-        {/* Progress bar */}
+        {/* Progress bar — 120px to match header */}
         <div
-          style={{ width: 100, flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}
+          style={{ width: 120, flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}
         >
           <ProgressBar value={objective.progress} height={6} />
           <span style={{ fontSize: "0.72rem", color: "var(--muted)", whiteSpace: "nowrap" }}>
@@ -453,14 +459,17 @@ const EMPTY_FORM: NewObjectiveForm = {
   period: currentQuarter(),
   description: "",
   rationale: "",
+  parent_id: "",
 };
 
 function NewObjectiveModal({
   onClose,
   onCreated,
+  existingObjectives,
 }: {
   onClose: () => void;
   onCreated: (obj: Objective) => void;
+  existingObjectives: Objective[];
 }) {
   const [form, setForm] = useState<NewObjectiveForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
@@ -493,6 +502,7 @@ function NewObjectiveModal({
           period: form.period.trim() || currentQuarter(),
           description: form.description.trim(),
           rationale: form.rationale.trim(),
+          ...(form.parent_id ? { parent_id: form.parent_id } : {}),
         }),
       });
       if (!res.ok) {
@@ -606,6 +616,33 @@ function NewObjectiveModal({
               />
             </label>
           </div>
+
+          {existingObjectives.length > 0 && (
+            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.85rem", fontWeight: 600 }}>
+              Parent Objective
+              <select
+                name="parent_id"
+                value={form.parent_id}
+                onChange={handleChange}
+                style={{
+                  padding: "8px 12px",
+                  border: "1px solid var(--line)",
+                  borderRadius: 10,
+                  fontSize: "0.9rem",
+                  fontFamily: "inherit",
+                  color: "var(--text)",
+                  background: "var(--surface-2)",
+                }}
+              >
+                <option value="">— None (top-level) —</option>
+                {existingObjectives.map((obj) => (
+                  <option key={obj.obj_id} value={obj.obj_id}>
+                    [{obj.level.charAt(0).toUpperCase() + obj.level.slice(1)}] {obj.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
 
           <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.85rem", fontWeight: 600 }}>
             Owner
@@ -736,7 +773,7 @@ export default function OKRsPage() {
   useEffect(() => {
     setLoading(true);
     setError("");
-    const params = new URLSearchParams();
+    const params = new URLSearchParams({ org_id: "default" });
     if (period) params.set("period", period);
     if (levelFilter !== "all") params.set("level", levelFilter);
     if (statusFilter !== "all") params.set("status", statusFilter);
@@ -1097,6 +1134,7 @@ export default function OKRsPage() {
         <NewObjectiveModal
           onClose={() => setShowModal(false)}
           onCreated={handleCreated}
+          existingObjectives={objectives}
         />
       )}
     </PageShell>

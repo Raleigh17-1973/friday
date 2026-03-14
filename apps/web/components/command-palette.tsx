@@ -66,7 +66,7 @@ export function CommandPalette({
     if (query.trim().length < 2) { setOkrs([]); setDocs([]); return; }
     const t = setTimeout(() => {
       const q = encodeURIComponent(query.trim());
-      fetch(`${BACKEND}/okrs?org_id=org-1&q=${q}`)
+      fetch(`${BACKEND}/okrs?org_id=default&q=${q}`)
         .then((r) => r.ok ? r.json() : [])
         .then((data: unknown[]) => {
           if (!Array.isArray(data)) return;

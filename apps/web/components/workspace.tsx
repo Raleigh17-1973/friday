@@ -6,6 +6,7 @@ import {
   BarChart2,
   ChevronDown,
   FileText,
+  FlaskConical,
   Folders,
   Settings,
   Target,
@@ -60,16 +61,30 @@ function parseSegments(text: string): Segment[] {
   return segments.length > 0 ? segments : [{ kind: "text", content: text }];
 }
 
+// ── Role helpers ──────────────────────────────────────────────────────────
+type UserRole = "member" | "tool_admin" | "dev_admin" | "developer";
+
+function loadUserRole(): UserRole {
+  if (typeof window === "undefined") return "member";
+  return (localStorage.getItem("friday_user_role") as UserRole) ?? "member";
+}
+
 // ── Nav items ──────────────────────────────────────────────────────────────
-type NavItem = { label: string; href: string; icon: LucideIcon };
+type NavItem = {
+  label: string;
+  href: string;
+  icon: LucideIcon;
+  roles?: UserRole[];
+};
 
 const NAV_ITEMS: NavItem[] = [
-  { label: "Process Library", href: "/processes",  icon: Workflow  },
-  { label: "Documents",       href: "/documents",  icon: FileText  },
-  { label: "Analytics",       href: "/analytics",  icon: BarChart2 },
-  { label: "OKRs",            href: "/okrs",       icon: Target    },
-  { label: "Workspaces",      href: "/workspaces", icon: Folders   },
-  { label: "Settings",        href: "/settings",   icon: Settings  },
+  { label: "Process Library", href: "/processes",  icon: Workflow      },
+  { label: "Documents",       href: "/documents",  icon: FileText      },
+  { label: "Analytics",       href: "/analytics",  icon: BarChart2     },
+  { label: "OKRs",            href: "/okrs",       icon: Target        },
+  { label: "Workspaces",      href: "/workspaces", icon: Folders       },
+  { label: "QA Registry",     href: "/qa",         icon: FlaskConical, roles: ["developer", "dev_admin"] },
+  { label: "Settings",        href: "/settings",   icon: Settings,     roles: ["developer", "dev_admin", "tool_admin"] },
 ];
 
 // ── Status dot ────────────────────────────────────────────────────────────
@@ -114,6 +129,7 @@ function LeftRail({
   const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([]);
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [userRole, setUserRole] = useState<UserRole>("member");
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -126,6 +142,13 @@ function LeftRail({
       .then((r) => r.ok ? r.json() : [])
       .then((data: WorkspaceItem[]) => setWorkspaces(Array.isArray(data) ? data.slice(0, 6) : []))
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setUserRole(loadUserRole());
+    const onRoleChange = () => setUserRole(loadUserRole());
+    window.addEventListener("friday_role_changed", onRoleChange);
+    return () => window.removeEventListener("friday_role_changed", onRoleChange);
   }, []);
 
   // Close menu on outside click
@@ -166,7 +189,7 @@ function LeftRail({
       <header className="rail-header">Friday</header>
 
       <nav className="rail-nav" aria-label="Main navigation">
-        {NAV_ITEMS.map(({ label, href, icon: Icon }) => (
+        {NAV_ITEMS.filter(({ roles }) => !roles || roles.includes(userRole)).map(({ label, href, icon: Icon }) => (
           <a
             key={href}
             href={href}
@@ -321,11 +344,60 @@ function MessageRow({
 
   const runId = message.meta?.run_id as string | undefined;
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(message.text).then(() => {
+  const handleCopy = async () => {
+    // Convert markdown to basic HTML so paste targets like Google Docs
+    // receive formatted text rather than raw markdown characters.
+    const markdownToHtml = (md: string): string => {
+      return md
+        // Headings
+        .replace(/^### (.+)$/gm, "<h3>$1</h3>")
+        .replace(/^## (.+)$/gm, "<h2>$1</h2>")
+        .replace(/^# (.+)$/gm, "<h1>$1</h1>")
+        // Bold / italic
+        .replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>")
+        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+        .replace(/\*(.+?)\*/g, "<em>$1</em>")
+        // Inline code
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        // Code fences → pre blocks
+        .replace(/```[\w]*\n([\s\S]*?)```/g, "<pre><code>$1</code></pre>")
+        // Blockquotes
+        .replace(/^> (.+)$/gm, "<blockquote>$1</blockquote>")
+        // Unordered lists
+        .replace(/^\s*[-*+] (.+)$/gm, "<li>$1</li>")
+        // Ordered lists
+        .replace(/^\s*\d+\. (.+)$/gm, "<li>$1</li>")
+        // Wrap consecutive <li> with <ul>
+        .replace(/(<li>[\s\S]+?<\/li>)(?=\s*<li>|$)/g, (m) => `<ul>${m}</ul>`)
+        // Paragraphs (double newline)
+        .replace(/\n{2,}/g, "</p><p>")
+        .replace(/^(?!<[hup]|<li|<blockquote|<pre)(.+)$/gm, "<p>$1</p>")
+        // Clean up stacked <ul> artifacts
+        .replace(/<\/ul>\s*<ul>/g, "");
+    };
+
+    const htmlContent = `<html><body>${markdownToHtml(message.text)}</body></html>`;
+
+    try {
+      if (typeof ClipboardItem !== "undefined") {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "text/html": new Blob([htmlContent], { type: "text/html" }),
+            "text/plain": new Blob([message.text], { type: "text/plain" }),
+          }),
+        ]);
+      } else {
+        // Fallback for browsers without ClipboardItem support
+        await navigator.clipboard.writeText(message.text);
+      }
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    });
+    } catch {
+      // Final fallback
+      await navigator.clipboard.writeText(message.text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   const handleVote = (approved: boolean) => {
@@ -1032,6 +1104,23 @@ export function Workspace() {
   }, [messages]);
 
   const [showPalette, setShowPalette] = useState(false);
+
+  // Handle ?new_chat=1&workspace_id=X&workspace_name=Y — create a fresh thread in workspace context
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("new_chat") === "1") {
+      const wsId = params.get("workspace_id");
+      const wsName = params.get("workspace_name");
+      createThread();
+      if (wsId && wsName) {
+        setActiveWorkspace(wsId, wsName);
+      }
+      // Clean up URL without triggering a navigation
+      const clean = window.location.pathname;
+      window.history.replaceState({}, "", clean);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Cmd+K / Ctrl+K to open command palette
   useEffect(() => {

@@ -17,7 +17,9 @@ from packages.credentials import CredentialService
 from packages.templates import TemplateService
 from packages.analytics import KPIService, ChartService
 from packages.okrs import OKRService
+from packages.qa import QAService
 from packages.workspaces import WorkspaceService
+from packages.projects.service import ProjectService
 from packages.finance import InvoiceService, BudgetService, FinancialModelingService
 from packages.brand import BrandAssetService
 from packages.events import EventBus
@@ -115,9 +117,17 @@ class FridayService:
         okr_db = self.root / "data" / "friday_okrs.sqlite3"
         self.okrs = OKRService(db_path=okr_db)
 
+        # QA Test Registry
+        qa_db = self.root / "data" / "friday_qa.sqlite3"
+        self.qa = QAService(db_path=qa_db)
+
         # Phase 5b: Workspaces
         workspace_db = self.root / "data" / "workspaces.db"
         self.workspaces = WorkspaceService(db_path=workspace_db)
+
+        # Projects (lightweight grouping under workspaces)
+        projects_db = self.root / "data" / "friday_projects.sqlite3"
+        self.projects = ProjectService(db_path=projects_db)
 
         # Phase 6: Brand
         brand_db = self.root / "data" / "friday_brand.sqlite3"

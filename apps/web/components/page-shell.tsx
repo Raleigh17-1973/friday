@@ -10,11 +10,26 @@ import {
   Settings,
   Target,
   Workflow,
+  FlaskConical,
   type LucideIcon,
 } from "lucide-react";
 
+// ── Role helpers ─────────────────────────────────────────────────────────────
+type UserRole = "member" | "tool_admin" | "dev_admin" | "developer";
+
+function loadUserRole(): UserRole {
+  if (typeof window === "undefined") return "member";
+  return (localStorage.getItem("friday_user_role") as UserRole) ?? "member";
+}
+
 // ── Nav items — must mirror workspace.tsx NAV_ITEMS (plus Chat entry) ────
-type NavItem = { href: string; icon: LucideIcon; label: string };
+type NavItem = {
+  href: string;
+  icon: LucideIcon;
+  label: string;
+  /** Roles that can see this item. Undefined = visible to all. */
+  roles?: UserRole[];
+};
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/",           icon: MessageSquare, label: "Chat"           },
@@ -23,7 +38,8 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/analytics",  icon: BarChart2,     label: "Analytics"       },
   { href: "/okrs",       icon: Target,        label: "OKRs"            },
   { href: "/workspaces", icon: Folders,       label: "Workspaces"      },
-  { href: "/settings",   icon: Settings,      label: "Settings"        },
+  { href: "/qa",         icon: FlaskConical,  label: "QA Registry",    roles: ["developer", "dev_admin"] },
+  { href: "/settings",   icon: Settings,      label: "Settings",       roles: ["developer", "dev_admin", "tool_admin"] },
 ];
 
 interface BreadcrumbItem {
@@ -55,9 +71,15 @@ export function PageShell({
   rightRail,
 }: PageShellProps) {
   const [currentPath, setCurrentPath] = React.useState("");
+  const [userRole, setUserRole] = React.useState<UserRole>("member");
 
   React.useEffect(() => {
     setCurrentPath(window.location.pathname);
+    setUserRole(loadUserRole());
+
+    const onRoleChange = () => setUserRole(loadUserRole());
+    window.addEventListener("friday_role_changed", onRoleChange);
+    return () => window.removeEventListener("friday_role_changed", onRoleChange);
   }, []);
 
   return (
@@ -89,7 +111,7 @@ export function PageShell({
         </div>
 
         {/* Nav Links */}
-        {NAV_ITEMS.map(({ href, icon: Icon, label }) => {
+        {NAV_ITEMS.filter(({ roles }) => !roles || roles.includes(userRole)).map(({ href, icon: Icon, label }) => {
           const isActive = currentPath === href || (href !== "/" && currentPath.startsWith(href));
           return (
             <Link

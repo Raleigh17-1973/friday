@@ -92,7 +92,8 @@ const LEVEL_COLOR: Record<string, string> = {
   individual: "#22c55e",
 };
 
-function statusLabel(s: string) {
+function statusLabel(s: string | undefined | null) {
+  if (!s) return "—";
   return s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
@@ -109,6 +110,107 @@ function ProgressBar({ value, status }: { value: number; status: string }) {
   );
 }
 
+// ── Edit Objective Form ────────────────────────────────────────────────────
+function EditObjectiveForm({ obj, onDone }: { obj: ObjectiveDetail; onDone: () => void }) {
+  const [form, setForm] = useState({
+    title: obj.title,
+    description: obj.description || "",
+    owner: obj.owner || "",
+    status: obj.status,
+    confidence: Math.round(obj.confidence * 100),
+    period: obj.period || "",
+    level: obj.level,
+    rationale: obj.rationale || "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch(`${API}/okrs/${obj.obj_id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...form,
+          confidence: form.confidence / 100,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      onDone();
+    } catch {
+      setError("Failed to save. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const inp = (field: keyof typeof form) => ({
+    className: "form-input",
+    value: form[field],
+    onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
+      setForm({ ...form, [field]: e.target.value }),
+  });
+
+  return (
+    <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "0.82rem", fontWeight: 600 }}>
+          Title
+          <input {...inp("title")} required />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "0.82rem", fontWeight: 600 }}>
+          Owner
+          <input {...inp("owner")} placeholder="e.g. Jane Smith" />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "0.82rem", fontWeight: 600 }}>
+          Status
+          <select {...inp("status")} className="form-select">
+            <option value="active">Active</option>
+            <option value="on_track">On Track</option>
+            <option value="at_risk">At Risk</option>
+            <option value="behind">Behind</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "0.82rem", fontWeight: 600 }}>
+          Level
+          <select {...inp("level")} className="form-select">
+            <option value="company">Company</option>
+            <option value="team">Team</option>
+            <option value="individual">Individual</option>
+          </select>
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "0.82rem", fontWeight: 600 }}>
+          Period
+          <input {...inp("period")} placeholder="e.g. 2025-Q1" />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "0.82rem", fontWeight: 600 }}>
+          Confidence (%)
+          <input type="number" min={0} max={100} {...inp("confidence")} className="form-input" />
+        </label>
+      </div>
+      <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "0.82rem", fontWeight: 600 }}>
+        Description
+        <textarea {...inp("description")} className="form-input" rows={2} style={{ resize: "vertical" }} />
+      </label>
+      <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "0.82rem", fontWeight: 600 }}>
+        Why It Matters (Rationale)
+        <textarea {...inp("rationale")} className="form-input" rows={2} style={{ resize: "vertical" }} />
+      </label>
+      {error && <p style={{ color: "#dc2626", fontSize: "0.82rem", margin: 0 }}>{error}</p>}
+      <div style={{ display: "flex", gap: "0.5rem" }}>
+        <button type="submit" className="btn btn-primary btn-sm" disabled={saving}>{saving ? "Saving…" : "Save Changes"}</button>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onDone}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+// ── Add KR Form ────────────────────────────────────────────────────────────
 function AddKRForm({ objId, onDone }: { objId: string; onDone: () => void }) {
   const [form, setForm] = useState({
     title: "",
@@ -162,6 +264,77 @@ function AddKRForm({ objId, onDone }: { objId: string; onDone: () => void }) {
   );
 }
 
+// ── Update KR Form ─────────────────────────────────────────────────────────
+function UpdateKRForm({ kr, onDone }: { kr: KeyResult; onDone: () => void }) {
+  const [form, setForm] = useState({
+    current_value: kr.current_value,
+    status: kr.status,
+    notes: kr.notes || "",
+  });
+  const [saving, setSaving] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await fetch(`${API}/okrs/key-results/${kr.kr_id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      onDone();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const range = kr.target_value - kr.baseline;
+  const pct = range !== 0 ? Math.round(((form.current_value - kr.baseline) / range) * 100) : 0;
+
+  return (
+    <form onSubmit={submit} style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "0.5rem", padding: "0.875rem", marginTop: "0.5rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.5rem", marginBottom: "0.5rem" }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: "3px", fontSize: "0.78rem", fontWeight: 600 }}>
+          Current Value
+          <input
+            className="form-input"
+            type="number"
+            value={form.current_value}
+            onChange={(e) => setForm({ ...form, current_value: +e.target.value })}
+          />
+          <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+            {kr.baseline} → {form.current_value} / {kr.target_value} {kr.unit} ({pct}%)
+          </span>
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: "3px", fontSize: "0.78rem", fontWeight: 600 }}>
+          Status
+          <select className="form-select" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+            <option value="active">Active</option>
+            <option value="on_track">On Track</option>
+            <option value="at_risk">At Risk</option>
+            <option value="behind">Behind</option>
+            <option value="completed">Completed</option>
+          </select>
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: "3px", fontSize: "0.78rem", fontWeight: 600 }}>
+          Notes
+          <input
+            className="form-input"
+            placeholder="Update notes…"
+            value={form.notes}
+            onChange={(e) => setForm({ ...form, notes: e.target.value })}
+          />
+        </label>
+      </div>
+      <div style={{ display: "flex", gap: "0.5rem" }}>
+        <button type="submit" className="btn btn-primary btn-sm" disabled={saving}>{saving ? "Saving…" : "Update Progress"}</button>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onDone}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+// ── Add Initiative Form ────────────────────────────────────────────────────
 function AddInitiativeForm({ objId, onDone }: { objId: string; onDone: () => void }) {
   const [form, setForm] = useState({ title: "", owner: "", status: "not_started", due_date: "", description: "" });
   const [saving, setSaving] = useState(false);
@@ -202,13 +375,133 @@ function AddInitiativeForm({ objId, onDone }: { objId: string; onDone: () => voi
   );
 }
 
+// ── Update Initiative inline ───────────────────────────────────────────────
+function UpdateInitiativeRow({ init, onDone }: { init: Initiative; onDone: () => void }) {
+  const [status, setStatus] = useState(init.status);
+  const [owner, setOwner] = useState(init.owner || "");
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await fetch(`${API}/okrs/initiatives/${init.initiative_id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, owner }),
+      });
+      onDone();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.5rem", background: "var(--bg)", borderRadius: "0.375rem", marginTop: "0.25rem" }}>
+      <select className="form-select" value={status} onChange={(e) => setStatus(e.target.value)} style={{ width: 140 }}>
+        <option value="not_started">Not Started</option>
+        <option value="in_progress">In Progress</option>
+        <option value="done">Done</option>
+        <option value="blocked">Blocked</option>
+      </select>
+      <input className="form-input" placeholder="Owner" value={owner} onChange={(e) => setOwner(e.target.value)} style={{ width: 140 }} />
+      <button className="btn btn-primary btn-sm" onClick={save} disabled={saving}>{saving ? "…" : "Save"}</button>
+      <button className="btn btn-ghost btn-sm" onClick={onDone}>Cancel</button>
+    </div>
+  );
+}
+
+// ── Add Check-in Form ──────────────────────────────────────────────────────
+function AddCheckInForm({ objId, onDone }: { objId: string; onDone: () => void }) {
+  const [form, setForm] = useState({
+    author: "",
+    status: "on_track",
+    confidence: 70,
+    highlights: "",
+    blockers: "",
+    next_steps: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.author.trim() || !form.highlights.trim()) {
+      setError("Author and highlights are required.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch(`${API}/okrs/${objId}/check-in`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...form, confidence: form.confidence / 100 }),
+      });
+      if (!res.ok) throw new Error("Failed to submit");
+      onDone();
+    } catch {
+      setError("Failed to submit check-in. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "0.5rem", padding: "1rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.5rem", marginBottom: "0.75rem" }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: "3px", fontSize: "0.82rem", fontWeight: 600 }}>
+          Author <input className="form-input" placeholder="Your name" value={form.author} onChange={(e) => setForm({ ...form, author: e.target.value })} required />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: "3px", fontSize: "0.82rem", fontWeight: 600 }}>
+          Status
+          <select className="form-select" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+            <option value="on_track">On Track</option>
+            <option value="at_risk">At Risk</option>
+            <option value="behind">Behind</option>
+            <option value="completed">Completed</option>
+          </select>
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: "3px", fontSize: "0.82rem", fontWeight: 600 }}>
+          Confidence ({form.confidence}%)
+          <input type="range" min={0} max={100} step={5} value={form.confidence} onChange={(e) => setForm({ ...form, confidence: +e.target.value })} style={{ marginTop: "4px" }} />
+        </label>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "0.75rem" }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: "3px", fontSize: "0.82rem", fontWeight: 600 }}>
+          ✅ Highlights — what progress was made?
+          <textarea className="form-input" rows={2} value={form.highlights} onChange={(e) => setForm({ ...form, highlights: e.target.value })} placeholder="Key accomplishments this period…" style={{ resize: "vertical" }} required />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: "3px", fontSize: "0.82rem", fontWeight: 600 }}>
+          🚧 Blockers (optional)
+          <textarea className="form-input" rows={2} value={form.blockers} onChange={(e) => setForm({ ...form, blockers: e.target.value })} placeholder="Any blockers or risks…" style={{ resize: "vertical" }} />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: "3px", fontSize: "0.82rem", fontWeight: 600 }}>
+          → Next Steps (optional)
+          <textarea className="form-input" rows={2} value={form.next_steps} onChange={(e) => setForm({ ...form, next_steps: e.target.value })} placeholder="Planned actions for next period…" style={{ resize: "vertical" }} />
+        </label>
+      </div>
+      {error && <p style={{ color: "#dc2626", fontSize: "0.82rem", margin: "0 0 0.5rem" }}>{error}</p>}
+      <div style={{ display: "flex", gap: "0.5rem" }}>
+        <button type="submit" className="btn btn-primary btn-sm" disabled={saving}>{saving ? "Submitting…" : "Submit Check-in"}</button>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onDone}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+// ── Main Page ──────────────────────────────────────────────────────────────
 export default function OKRDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [obj, setObj] = useState<ObjectiveDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [editingObj, setEditingObj] = useState(false);
   const [showAddKR, setShowAddKR] = useState(false);
+  const [editingKR, setEditingKR] = useState<string | null>(null);
   const [showAddInit, setShowAddInit] = useState(false);
+  const [editingInit, setEditingInit] = useState<string | null>(null);
+  const [showAddCheckIn, setShowAddCheckIn] = useState(false);
+  const [showAllCheckIns, setShowAllCheckIns] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -217,8 +510,22 @@ export default function OKRDetailPage() {
       const res = await fetch(`${API}/okrs/${id}`);
       if (res.status === 404) { setError("Objective not found"); return; }
       if (!res.ok) throw new Error("Failed to load");
-      const data = await res.json();
-      setObj(data);
+      const data = await res.json() as {
+        objective?: ObjectiveDetail;
+        key_results?: KeyResult[];
+        initiatives?: Initiative[];
+        checkins?: CheckIn[];
+      } & ObjectiveDetail;
+      if (data.objective) {
+        setObj({
+          ...data.objective,
+          key_results: data.key_results ?? [],
+          initiatives: data.initiatives ?? [],
+          checkins: data.checkins ?? [],
+        });
+      } else {
+        setObj(data as ObjectiveDetail);
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Error loading");
     } finally {
@@ -258,15 +565,25 @@ export default function OKRDetailPage() {
         }, 0) / obj.key_results.length
       : obj.progress;
 
+  const visibleCheckIns = showAllCheckIns ? obj.checkins : obj.checkins.slice(0, 5);
+
   return (
     <PageShell
       title={obj.title}
       breadcrumbs={[{ label: "OKRs", href: "/okrs" }, { label: obj.title }]}
       subtitle={`${obj.period} · ${obj.level} objective`}
+      headerActions={
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={() => { setEditingObj(true); }}
+        >
+          ✏️ Edit Objective
+        </button>
+      }
     >
       <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
 
-        {/* Summary card */}
+        {/* Overview card */}
         <div className="card">
           <div className="card-header">
             Overview
@@ -276,60 +593,72 @@ export default function OKRDetailPage() {
             </div>
           </div>
           <div className="card-body">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem" }}>
-              <div>
-                {obj.description && <p style={{ color: "var(--text)", marginBottom: "1rem", lineHeight: 1.6 }}>{obj.description}</p>}
-                {obj.rationale && (
-                  <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "0.5rem", padding: "0.75rem", marginBottom: "1rem" }}>
-                    <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: "0.25rem", textTransform: "uppercase" }}>Why it matters</div>
-                    <div style={{ fontSize: "0.875rem", color: "var(--text)", lineHeight: 1.5 }}>{obj.rationale}</div>
-                  </div>
-                )}
-                {obj.parent_id && (
-                  <div style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>
-                    Parent: <Link href={`/okrs/${obj.parent_id}`} style={{ color: "var(--accent)" }}>View parent objective →</Link>
-                  </div>
-                )}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            {editingObj ? (
+              <EditObjectiveForm
+                obj={obj}
+                onDone={() => { setEditingObj(false); load(); }}
+              />
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem" }}>
                 <div>
-                  <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: "0.375rem" }}>OWNER</div>
-                  <div style={{ fontSize: "0.9375rem", fontWeight: 500 }}>{obj.owner || "—"}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: "0.375rem" }}>PROGRESS</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-                    <ProgressBar value={krProgress} status={obj.status} />
-                    <span style={{ fontSize: "0.9375rem", fontWeight: 600 }}>{Math.round(krProgress * 100)}%</span>
-                  </div>
-                </div>
-                <div>
-                  <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: "0.375rem" }}>CONFIDENCE</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-                    <div className="progress-bar-wrap">
-                      <div
-                        className="progress-bar-fill"
-                        style={{
-                          width: `${Math.round(obj.confidence * 100)}%`,
-                          background: obj.confidence >= 0.7 ? "#16a34a" : obj.confidence >= 0.4 ? "#d97706" : "#dc2626",
-                        }}
-                      />
+                  {obj.description && <p style={{ color: "var(--text)", marginBottom: "1rem", lineHeight: 1.6 }}>{obj.description}</p>}
+                  {obj.rationale && (
+                    <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "0.5rem", padding: "0.75rem", marginBottom: "1rem" }}>
+                      <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: "0.25rem", textTransform: "uppercase" }}>Why it matters</div>
+                      <div style={{ fontSize: "0.875rem", color: "var(--text)", lineHeight: 1.5 }}>{obj.rationale}</div>
                     </div>
-                    <span style={{ fontSize: "0.9375rem", fontWeight: 600 }}>{Math.round(obj.confidence * 100)}%</span>
-                  </div>
+                  )}
+                  {obj.parent_id && (
+                    <div style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>
+                      Parent: <Link href={`/okrs/${obj.parent_id}`} style={{ color: "var(--accent)" }}>View parent objective →</Link>
+                    </div>
+                  )}
                 </div>
-                {obj.collaborators.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
                   <div>
-                    <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: "0.375rem" }}>COLLABORATORS</div>
-                    <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap" }}>
-                      {obj.collaborators.map((c) => (
-                        <span key={c} className="badge badge-neutral">{c}</span>
-                      ))}
+                    <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: "0.375rem" }}>OWNER</div>
+                    <div style={{ fontSize: "0.9375rem", fontWeight: 500 }}>{obj.owner || "—"}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: "0.375rem" }}>PROGRESS</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                      <ProgressBar value={krProgress} status={obj.status} />
+                      <span style={{ fontSize: "0.9375rem", fontWeight: 600 }}>{Math.round(krProgress * 100)}%</span>
+                    </div>
+                    {obj.key_results.length > 0 && (
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>
+                        Auto-computed from {obj.key_results.length} key result{obj.key_results.length !== 1 ? "s" : ""}
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: "0.375rem" }}>CONFIDENCE</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                      <div className="progress-bar-wrap">
+                        <div
+                          className="progress-bar-fill"
+                          style={{
+                            width: `${Math.round(obj.confidence * 100)}%`,
+                            background: obj.confidence >= 0.7 ? "#16a34a" : obj.confidence >= 0.4 ? "#d97706" : "#dc2626",
+                          }}
+                        />
+                      </div>
+                      <span style={{ fontSize: "0.9375rem", fontWeight: 600 }}>{Math.round(obj.confidence * 100)}%</span>
                     </div>
                   </div>
-                )}
+                  {obj.collaborators.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: "0.375rem" }}>COLLABORATORS</div>
+                      <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap" }}>
+                        {obj.collaborators.map((c) => (
+                          <span key={c} className="badge badge-neutral">{c}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
 
@@ -356,6 +685,7 @@ export default function OKRDetailPage() {
                 {obj.key_results.map((kr) => {
                   const range = kr.target_value - kr.baseline;
                   const progress = range !== 0 ? (kr.current_value - kr.baseline) / range : 0;
+                  const isEditing = editingKR === kr.kr_id;
                   return (
                     <div key={kr.kr_id} style={{ border: "1px solid var(--border)", borderRadius: "0.5rem", padding: "1rem" }}>
                       <div style={{ display: "flex", alignItems: "flex-start", gap: "0.75rem", marginBottom: "0.625rem" }}>
@@ -374,6 +704,13 @@ export default function OKRDetailPage() {
                         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.25rem", flexShrink: 0 }}>
                           <span className={STATUS_BADGE[kr.status] || "badge badge-neutral"}>{statusLabel(kr.status)}</span>
                           {kr.due_date && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Due {kr.due_date.slice(0, 10)}</span>}
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            style={{ fontSize: "0.72rem", padding: "2px 8px" }}
+                            onClick={() => setEditingKR(isEditing ? null : kr.kr_id)}
+                          >
+                            {isEditing ? "Cancel" : "Update Progress"}
+                          </button>
                         </div>
                       </div>
                       <div style={{ display: "flex", gap: "1rem", fontSize: "0.8125rem", color: "var(--text-muted)" }}>
@@ -386,6 +723,12 @@ export default function OKRDetailPage() {
                         <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.375rem" }}>
                           {kr.risk_flags.map((f) => <span key={f} className="badge badge-warning">⚠ {f}</span>)}
                         </div>
+                      )}
+                      {isEditing && (
+                        <UpdateKRForm
+                          kr={kr}
+                          onDone={() => { setEditingKR(null); load(); }}
+                        />
                       )}
                     </div>
                   );
@@ -415,41 +758,98 @@ export default function OKRDetailPage() {
                 <p className="empty-state-body">Initiatives are the activities that drive your key results.</p>
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                {obj.initiatives.map((init) => (
-                  <div key={init.initiative_id} style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.625rem 0", borderBottom: "1px solid var(--border)" }}>
-                    <span className={STATUS_BADGE[init.status] || "badge badge-neutral"}>{statusLabel(init.status)}</span>
-                    <span style={{ flex: 1, fontSize: "0.875rem", color: "var(--text)", fontWeight: 500 }}>{init.title}</span>
-                    {init.owner && <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>{init.owner}</span>}
-                    {init.due_date && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", whiteSpace: "nowrap" }}>Due {init.due_date.slice(0, 10)}</span>}
-                  </div>
-                ))}
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+                {obj.initiatives.map((init) => {
+                  const isEditing = editingInit === init.initiative_id;
+                  return (
+                    <div key={init.initiative_id}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.625rem 0", borderBottom: "1px solid var(--border)" }}>
+                        <span className={STATUS_BADGE[init.status] || "badge badge-neutral"}>{statusLabel(init.status)}</span>
+                        <span style={{ flex: 1, fontSize: "0.875rem", color: "var(--text)", fontWeight: 500 }}>{init.title}</span>
+                        {init.owner && <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>{init.owner}</span>}
+                        {init.due_date && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", whiteSpace: "nowrap" }}>Due {init.due_date.slice(0, 10)}</span>}
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          style={{ fontSize: "0.72rem", padding: "2px 8px" }}
+                          onClick={() => setEditingInit(isEditing ? null : init.initiative_id)}
+                        >
+                          {isEditing ? "Cancel" : "Edit"}
+                        </button>
+                      </div>
+                      {isEditing && (
+                        <UpdateInitiativeRow
+                          init={init}
+                          onDone={() => { setEditingInit(null); load(); }}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
             {showAddInit && <AddInitiativeForm objId={obj.obj_id} onDone={() => { setShowAddInit(false); load(); }} />}
           </div>
         </div>
 
-        {/* Check-in log */}
-        {obj.checkins && obj.checkins.length > 0 && (
-          <div className="card">
-            <div className="card-header">Check-in Log</div>
-            <div className="card-body" style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-              {obj.checkins.slice(0, 5).map((ci) => (
-                <div key={ci.checkin_id} style={{ borderLeft: "3px solid var(--accent)", paddingLeft: "1rem" }}>
-                  <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", marginBottom: "0.375rem" }}>
-                    <span className={STATUS_BADGE[ci.status] || "badge badge-neutral"}>{statusLabel(ci.status)}</span>
-                    <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>{ci.author} · {ci.created_at.slice(0, 10)}</span>
-                    <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>Confidence: {Math.round(ci.confidence * 100)}%</span>
-                  </div>
-                  {ci.highlights && <div style={{ fontSize: "0.875rem", marginBottom: "0.25rem" }}><strong>✅</strong> {ci.highlights}</div>}
-                  {ci.blockers && <div style={{ fontSize: "0.875rem", color: "#dc2626", marginBottom: "0.25rem" }}><strong>🚧</strong> {ci.blockers}</div>}
-                  {ci.next_steps && <div style={{ fontSize: "0.875rem", color: "var(--text-muted)" }}><strong>→</strong> {ci.next_steps}</div>}
-                </div>
-              ))}
+        {/* Check-in Log */}
+        <div className="card">
+          <div className="card-header">
+            Weekly Check-ins
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+              {obj.checkins.length > 0 && <span className="badge badge-neutral">{obj.checkins.length}</span>}
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => setShowAddCheckIn((v) => !v)}
+              >
+                {showAddCheckIn ? "Cancel" : "+ Log Update"}
+              </button>
             </div>
           </div>
-        )}
+          <div className="card-body" style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            {showAddCheckIn && (
+              <AddCheckInForm
+                objId={obj.obj_id}
+                onDone={() => { setShowAddCheckIn(false); load(); }}
+              />
+            )}
+            {obj.checkins.length === 0 && !showAddCheckIn ? (
+              <div className="empty-state" style={{ padding: "1.5rem" }}>
+                <div className="empty-state-icon">📝</div>
+                <p className="empty-state-title">No check-ins yet</p>
+                <p className="empty-state-body">Log regular updates to track momentum and surface blockers early.</p>
+              </div>
+            ) : (
+              <>
+                {visibleCheckIns.map((ci) => (
+                  <div key={ci.checkin_id} style={{ borderLeft: "3px solid var(--accent)", paddingLeft: "1rem" }}>
+                    <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", marginBottom: "0.375rem", flexWrap: "wrap" }}>
+                      <span className={STATUS_BADGE[ci.status] || "badge badge-neutral"}>{statusLabel(ci.status)}</span>
+                      <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>{ci.author}</span>
+                      <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>·</span>
+                      <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>{new Date(ci.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                      <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>·</span>
+                      <span style={{ fontSize: "0.8125rem", color: ci.confidence >= 0.7 ? "#16a34a" : ci.confidence >= 0.4 ? "#d97706" : "#dc2626" }}>
+                        {Math.round(ci.confidence * 100)}% confidence
+                      </span>
+                    </div>
+                    {ci.highlights && <div style={{ fontSize: "0.875rem", marginBottom: "0.25rem" }}><strong>✅</strong> {ci.highlights}</div>}
+                    {ci.blockers && <div style={{ fontSize: "0.875rem", color: "#dc2626", marginBottom: "0.25rem" }}><strong>🚧</strong> {ci.blockers}</div>}
+                    {ci.next_steps && <div style={{ fontSize: "0.875rem", color: "var(--text-muted)" }}><strong>→</strong> {ci.next_steps}</div>}
+                  </div>
+                ))}
+                {obj.checkins.length > 5 && (
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setShowAllCheckIns((v) => !v)}
+                    style={{ alignSelf: "flex-start" }}
+                  >
+                    {showAllCheckIns ? "Show fewer" : `Show all ${obj.checkins.length} check-ins`}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
       </div>
     </PageShell>
   );
