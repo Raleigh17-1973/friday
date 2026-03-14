@@ -77,8 +77,11 @@ Respond ONLY with valid JSON (no markdown fences):
   "risks": ["<specific risk with likelihood and impact where possible>"],
   "evidence": ["<data point or calculation from the problem statement>"],
   "confidence": <0.0-1.0 float>,
-  "questions": ["<only list if critical data is genuinely absent and your recommendation depends on it>"]
+  "questions": ["<only list if critical data is genuinely absent and your recommendation depends on it>"],
+  "tool_requests": []
 }
+
+The `tool_requests` field is OPTIONAL. Only populate it if you have been explicitly instructed to create or update a business object (OKR, process, task, decision) AND your system prompt confirms you have write access. When empty, omit or leave as []. When populated, each entry must be: {"tool": "<tool_id>", "args": {<tool-specific fields>}}.
 
 CRITICAL QUALITY RULES:
 1. If the problem includes numbers (costs, hours, %, headcount), compute with them — do not say "you would need to calculate"
@@ -134,6 +137,8 @@ class Specialist:
         max_tokens = 2000 if tot_mode else 1500
         parsed = self.llm.complete_json(system, prompt, max_tokens=max_tokens)
         if parsed and "analysis" in parsed and "recommendation" in parsed:
+            raw_requests = parsed.get("tool_requests", [])
+            tool_requests = [r for r in raw_requests if isinstance(r, dict) and "tool" in r and "args" in r]
             return SpecialistMemo(
                 specialist_id=self.specialist_id,
                 analysis=str(parsed.get("analysis", "")),
@@ -144,6 +149,7 @@ class Specialist:
                 confidence=float(parsed.get("confidence", 0.75)),
                 questions=list(parsed.get("questions", [])),
                 scenarios=parsed.get("scenarios") if tot_mode else None,
+                tool_requests=tool_requests,
             )
         raise ValueError("LLM returned unparseable specialist memo")
 

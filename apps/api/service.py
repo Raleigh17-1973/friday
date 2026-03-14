@@ -28,6 +28,9 @@ from packages.org_context import OrgContextService
 from packages.decisions import DecisionLogService
 from packages.meetings import MeetingService
 from packages.voice import VoiceTranscriptionService
+from packages.conversations.service import ConversationService
+from packages.tasks import TaskService
+from packages.notifications import NotificationService
 from packages.interpreter import CodeInterpreterService
 from packages.tools.mcp import MCPRegistry
 from packages.tools.policy_wrapped_tools import ToolExecutor
@@ -168,6 +171,18 @@ class FridayService:
         # Priority 8: Voice transcription
         self.voice = VoiceTranscriptionService()
 
+        # Priority 9: Persistent conversations
+        conv_db = self.root / "data" / "friday_conversations.sqlite3"
+        self.conversations = ConversationService(db_path=conv_db)
+
+        # Task management
+        tasks_db = self.root / "data" / "friday_tasks.sqlite3"
+        self.tasks = TaskService(db_path=tasks_db)
+
+        # Notification system
+        notifications_db = self.root / "data" / "friday_notifications.sqlite3"
+        self.notifications = NotificationService(db_path=notifications_db)
+
     def execute_chat_payload(self, payload: dict, upload_store: dict | None = None) -> dict:
         from packages.common.models import ChatRequest
 
@@ -194,6 +209,7 @@ class FridayService:
             conversation_id=str(payload.get("conversation_id") or "conv-1"),
             message=message,
             context_packet=payload.get("context_packet") or {},
+            workspace_id=payload.get("workspace_id") or None,
         )
         response = self.manager.run(request)
         trace = self.audit.get_run(response["run_id"])

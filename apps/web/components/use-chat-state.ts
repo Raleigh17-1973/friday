@@ -98,6 +98,28 @@ export function useChatState() {
     }
   }, []);
 
+  // After localStorage hydration, pull threads from backend (source of truth).
+  // Backend threads override localStorage so the list stays consistent across devices/tabs.
+  useEffect(() => {
+    if (!hydrated) return;
+    fetch(`${BACKEND}/conversations?org_id=web-org`)
+      .then((r) => r.json())
+      .then((data: Array<{ thread_id: string; title: string; updated_at: string }>) => {
+        if (!Array.isArray(data) || data.length === 0) return;
+        const backendThreads: ConversationThread[] = data.map((t) => ({
+          id: t.thread_id,
+          title: t.title,
+          updatedAt: t.updated_at,
+        }));
+        setThreads(backendThreads);
+        // Keep active thread if it exists in the backend list; otherwise fall back to first
+        setActiveThreadId((prev) =>
+          backendThreads.some((t) => t.id === prev) ? prev : backendThreads[0].id
+        );
+      })
+      .catch(() => undefined); // Fall back to localStorage silently if backend is unavailable
+  }, [hydrated]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (!hydrated) return;
     const payload: PersistedState = {
@@ -143,12 +165,24 @@ export function useChatState() {
     setMessagesByThread((prev) => ({ ...prev, [thread.id]: [] }));
     setActiveThreadId(thread.id);
     setProgress("Ready");
+    // Persist to backend (fire-and-forget — local state is already updated)
+    fetch(`${BACKEND}/conversations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ thread_id: thread.id, title: thread.title, org_id: "web-org" }),
+    }).catch(() => undefined);
   };
 
   const renameThread = (threadId: string, title: string) => {
     const clean = title.trim();
     if (!clean) return;
     setThreads((prev) => prev.map((thread) => (thread.id === threadId ? { ...thread, title: clean } : thread)));
+    // Persist to backend (fire-and-forget)
+    fetch(`${BACKEND}/conversations/${threadId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: clean }),
+    }).catch(() => undefined);
   };
 
   const deleteThread = (threadId: string) => {
@@ -280,6 +314,14 @@ export function useChatState() {
               format: string;
               download_url: string;
             };
+            write_actions?: Array<{
+              tool: string;
+              args: Record<string, unknown>;
+              specialist: string;
+              ok: boolean;
+              output: Record<string, unknown>;
+              error?: string | null;
+            }>;
           };
 
           if (eventName === "response.in_progress") {
@@ -297,6 +339,7 @@ export function useChatState() {
             if (data.selected_agents) metaUpdate.agents = data.selected_agents;
             if (data.confidence != null) metaUpdate.confidence = data.confidence;
             if (data.generated_document) metaUpdate.generated_document = data.generated_document;
+            if (data.write_actions?.length) metaUpdate.write_actions = data.write_actions;
 
             updateThreadMessages(threadId, (prev) =>
               prev.map((msg) =>

@@ -70,6 +70,8 @@ class ChatPayload(BaseModel):
     context_packet: dict[str, Any] = {}
     # Optional context IDs from POST /upload — injected as context blocks
     context_ids: list[str] = []
+    # Optional workspace context — injected into planning message when set
+    workspace_id: Optional[str] = None
 
 
 class FeedbackPayload(BaseModel):
@@ -186,7 +188,31 @@ def ready() -> dict:
 @app.post("/chat")
 def chat(payload: ChatPayload) -> dict:
     try:
-        return service.execute_chat_payload(payload.model_dump(), upload_store=_UPLOAD_STORE)
+        result = service.execute_chat_payload(payload.model_dump(), upload_store=_UPLOAD_STORE)
+        # Persist conversation messages
+        try:
+            msg = payload.message.strip()
+            if msg:
+                service.conversations.add_message(
+                    thread_id=payload.conversation_id,
+                    role="user",
+                    content=msg,
+                    metadata={"org_id": payload.org_id, "workspace_id": payload.workspace_id},
+                )
+                friday_text = str((result.get("final_answer") or {}).get("direct_answer") or result.get("response") or "")
+                if friday_text:
+                    meta: dict = {"org_id": payload.org_id}
+                    if result.get("run_id"): meta["run_id"] = result["run_id"]
+                    if result.get("write_actions"): meta["write_actions"] = result["write_actions"]
+                    service.conversations.add_message(
+                        thread_id=payload.conversation_id,
+                        role="friday",
+                        content=friday_text,
+                        metadata=meta,
+                    )
+        except Exception:
+            pass  # best-effort
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -214,15 +240,18 @@ def chat_stream(payload: ChatPayload):
         conversation_id=payload.conversation_id,
         message=message,
         context_packet=payload.context_packet,
+        workspace_id=payload.workspace_id,
     )
 
     def _event_generator():
         full_text_parts: list[str] = []
+        done_evt: dict | None = None
         for evt in service.manager.run_streaming(request):
             event_type = evt.get("event", "message")
             if event_type == "token":
                 full_text_parts.append(evt.get("text", ""))
             if event_type == "done":
+                done_evt = evt
                 # Attempt doc generation if this was a full_deliverable request
                 if evt.get("output_format") == "full_deliverable" and service.docgen is not None:
                     full_text = "".join(full_text_parts)
@@ -233,7 +262,30 @@ def chat_stream(payload: ChatPayload):
                     service._maybe_generate_document(message, payload.org_id, response_stub)
                     if response_stub.get("generated_document"):
                         evt = {**evt, "generated_document": response_stub["generated_document"]}
+                        done_evt = evt
             yield f"event: {event_type}\ndata: {_json.dumps(evt)}\n\n"
+        # Persist conversation messages after streaming completes
+        if full_text_parts:
+            try:
+                service.conversations.add_message(
+                    thread_id=payload.conversation_id,
+                    role="user",
+                    content=message,
+                    metadata={"org_id": payload.org_id, "workspace_id": payload.workspace_id},
+                )
+                friday_text = "".join(full_text_parts)
+                meta: dict = {"org_id": payload.org_id}
+                if done_evt:
+                    if done_evt.get("run_id"): meta["run_id"] = done_evt["run_id"]
+                    if done_evt.get("write_actions"): meta["write_actions"] = done_evt["write_actions"]
+                service.conversations.add_message(
+                    thread_id=payload.conversation_id,
+                    role="friday",
+                    content=friday_text,
+                    metadata=meta,
+                )
+            except Exception:
+                pass  # persistence is best-effort — never break the stream
 
     return StreamingResponse(
         _event_generator(),
@@ -241,6 +293,60 @@ def chat_stream(payload: ChatPayload):
         headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
     )
 
+
+# ── Conversation endpoints ─────────────────────────────────────────────────────
+
+class ConversationCreate(BaseModel):
+    org_id: str = "org-1"
+    workspace_id: Optional[str] = None
+    title: str = "New conversation"
+    thread_id: Optional[str] = None
+
+
+class ConversationRename(BaseModel):
+    title: str
+
+
+@app.get("/conversations")
+def list_conversations(org_id: str = "org-1") -> list[dict]:
+    return [t.to_dict() for t in service.conversations.list_threads(org_id=org_id)]
+
+
+@app.post("/conversations", status_code=201)
+def create_conversation(payload: ConversationCreate) -> dict:
+    thread = service.conversations.create_thread(
+        org_id=payload.org_id,
+        workspace_id=payload.workspace_id,
+        title=payload.title,
+        thread_id=payload.thread_id,
+    )
+    return thread.to_dict()
+
+
+@app.get("/conversations/{thread_id}/messages")
+def get_conversation_messages(thread_id: str) -> list[dict]:
+    messages = service.conversations.get_messages(thread_id)
+    return [m.to_dict() for m in messages]
+
+
+@app.patch("/conversations/{thread_id}")
+def rename_conversation(thread_id: str, payload: ConversationRename) -> dict:
+    thread = service.conversations.rename_thread(thread_id, payload.title)
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    return thread.to_dict()
+
+
+@app.delete("/conversations/{thread_id}", status_code=204)
+def delete_conversation(thread_id: str) -> None:
+    service.conversations.delete_thread(thread_id)
+    try:
+        service.memory.clear_conversation(thread_id)
+    except Exception:
+        pass
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 @app.post("/runs")
 def create_run(payload: ChatPayload) -> dict:
@@ -343,21 +449,175 @@ def list_approvals(status: str = "pending") -> dict:
     return {"approvals": [asdict(r) for r in items]}
 
 
-@app.get("/conversations")
-def list_conversations(user_id: str = "user-1", limit: int = 50) -> dict:
-    runs = service.audit.list_runs(limit=limit)
-    seen: dict[str, dict] = {}
-    for run in runs:
-        cid = run.get("conversation_id", "")
-        if cid and cid not in seen:
-            seen[cid] = {"conversation_id": cid, "user_id": run.get("user_id", ""), "last_run": run.get("run_id")}
-    return {"conversations": list(seen.values())}
+# ── Tasks ──────────────────────────────────────────────────────────────────────
+
+class TaskCreate(BaseModel):
+    title: str
+    description: str = ""
+    assignee: Optional[str] = None
+    due_date: Optional[str] = None
+    priority: str = "medium"
+    status: str = "open"
+    workspace_id: Optional[str] = None
+    okr_id: Optional[str] = None
+    kr_id: Optional[str] = None
+    process_id: Optional[str] = None
+    initiative_id: Optional[str] = None
+    created_by: str = "system"
 
 
-@app.delete("/conversations/{conversation_id}")
-def delete_conversation(conversation_id: str) -> dict:
-    service.memory.clear_conversation(conversation_id)
-    return {"status": "deleted", "conversation_id": conversation_id}
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    assignee: Optional[str] = None
+    due_date: Optional[str] = None
+    priority: Optional[str] = None
+    status: Optional[str] = None
+    workspace_id: Optional[str] = None
+    okr_id: Optional[str] = None
+    kr_id: Optional[str] = None
+    process_id: Optional[str] = None
+    initiative_id: Optional[str] = None
+
+
+@app.get("/tasks")
+def list_tasks(
+    assignee: Optional[str] = None,
+    workspace_id: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    due_before: Optional[str] = None,
+    okr_id: Optional[str] = None,
+    limit: int = 200,
+) -> list[dict]:
+    tasks = service.tasks.list(
+        assignee=assignee,
+        workspace_id=workspace_id,
+        status=status,
+        priority=priority,
+        due_before=due_before,
+        okr_id=okr_id,
+        limit=limit,
+    )
+    return [t.to_dict() for t in tasks]
+
+
+@app.post("/tasks", status_code=201)
+def create_task(payload: TaskCreate) -> dict:
+    task = service.tasks.create(
+        title=payload.title,
+        description=payload.description,
+        assignee=payload.assignee,
+        due_date=payload.due_date,
+        priority=payload.priority,
+        status=payload.status,
+        workspace_id=payload.workspace_id,
+        okr_id=payload.okr_id,
+        kr_id=payload.kr_id,
+        process_id=payload.process_id,
+        initiative_id=payload.initiative_id,
+        created_by=payload.created_by,
+    )
+    # Notify assignee when task is assigned to someone
+    if task.assignee:
+        try:
+            service.notifications.create(
+                recipient_id=task.assignee,
+                title=f"Task assigned: {task.title}",
+                body=f"Priority: {task.priority}" + (f" · Due {task.due_date}" if task.due_date else ""),
+                type="task_assigned",
+                entity_type="task",
+                entity_id=task.task_id,
+            )
+        except Exception:
+            pass
+    return task.to_dict()
+
+
+@app.get("/tasks/overdue")
+def list_overdue_tasks() -> list[dict]:
+    return [t.to_dict() for t in service.tasks.overdue()]
+
+
+@app.get("/tasks/due-soon")
+def list_due_soon_tasks(days: int = 7) -> list[dict]:
+    return [t.to_dict() for t in service.tasks.due_soon(days=days)]
+
+
+@app.get("/tasks/{task_id}")
+def get_task(task_id: str) -> dict:
+    task = service.tasks.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task.to_dict()
+
+
+@app.put("/tasks/{task_id}")
+def update_task(task_id: str, payload: TaskUpdate) -> dict:
+    changes = {k: v for k, v in payload.model_dump().items() if v is not None}
+    task = service.tasks.update(task_id, **changes)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task.to_dict()
+
+
+@app.delete("/tasks/{task_id}", status_code=204)
+def delete_task(task_id: str) -> None:
+    if not service.tasks.delete(task_id):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+
+# ── Notifications ──────────────────────────────────────────────────────────────
+
+class NotificationCreate(BaseModel):
+    recipient_id: str
+    title: str
+    body: str = ""
+    type: str = "general"
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+
+
+@app.get("/notifications")
+def list_notifications(
+    recipient_id: str = "user-1",
+    unread_only: bool = False,
+    limit: int = 50,
+) -> list[dict]:
+    return [n.to_dict() for n in service.notifications.list(recipient_id=recipient_id, unread_only=unread_only, limit=limit)]
+
+
+@app.get("/notifications/unread-count")
+def unread_notification_count(recipient_id: str = "user-1") -> dict:
+    return {"count": service.notifications.count_unread(recipient_id)}
+
+
+@app.post("/notifications", status_code=201)
+def create_notification(payload: NotificationCreate) -> dict:
+    notif = service.notifications.create(
+        recipient_id=payload.recipient_id,
+        title=payload.title,
+        body=payload.body,
+        type=payload.type,
+        entity_type=payload.entity_type,
+        entity_id=payload.entity_id,
+    )
+    return notif.to_dict()
+
+
+@app.post("/notifications/{notification_id}/read", status_code=204)
+def mark_notification_read(notification_id: str) -> None:
+    service.notifications.mark_read(notification_id)
+
+
+@app.post("/notifications/read-all", status_code=204)
+def mark_all_notifications_read(recipient_id: str = "user-1") -> None:
+    service.notifications.mark_all_read(recipient_id)
+
+
+@app.delete("/notifications/{notification_id}", status_code=204)
+def delete_notification(notification_id: str) -> None:
+    service.notifications.delete(notification_id)
 
 
 @app.get("/agents")

@@ -93,6 +93,7 @@ class ChatRequest:
     conversation_id: str
     message: str
     context_packet: dict[str, Any] = field(default_factory=dict)
+    workspace_id: str | None = None
 
 
 @dataclass
@@ -119,6 +120,9 @@ class SpecialistMemo:
     # Tree-of-thought scenarios — populated only when risk_level is HIGH.
     # Keys: "optimistic", "base", "pessimistic"; each has description/outcome/probability/key_driver.
     scenarios: dict[str, Any] | None = None
+    # Structured write actions the specialist requests the manager to execute after synthesis.
+    # Each entry: {"tool": "okrs.create", "args": {"title": "...", ...}}
+    tool_requests: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -212,6 +216,7 @@ class RunTrace:
                     confidence=float(memo["confidence"]),
                     questions=list(memo["questions"]),
                     scenarios=memo.get("scenarios"),
+                    tool_requests=list(memo.get("tool_requests", [])),
                 )
                 for memo in data["specialist_memos"]
             ],

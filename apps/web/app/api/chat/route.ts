@@ -100,6 +100,10 @@ export async function POST(req: NextRequest) {
           if (data?.generated_document) {
             completedPayload.generated_document = data.generated_document;
           }
+          if (data?.write_actions) {
+            completedPayload.write_actions = data.write_actions;
+          }
+          if (data?.run_id) completedPayload.run_id = data.run_id;
           controller.enqueue(enc.encode(sseEvent("response.completed", completedPayload)));
         } catch (fallbackErr) {
           controller.enqueue(

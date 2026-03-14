@@ -125,6 +125,43 @@ class ToolRegistry:
                 scopes=["okrs.read"], enabled=True,
                 meta={"description": "Get OKR status and progress"},
             ),
+            "okrs.create": ToolDefinition(
+                tool_id="okrs.create", source="function", mode="write",
+                scopes=["okrs.write"], enabled=True,
+                meta={"description": "Create a new OKR objective with title, period, level, and optional key results"},
+            ),
+            "okrs.update_kr": ToolDefinition(
+                tool_id="okrs.update_kr", source="function", mode="write",
+                scopes=["okrs.write"], enabled=True,
+                meta={"description": "Update a key result's current value or metadata"},
+            ),
+            # ---- Process management ----
+            "process.create": ToolDefinition(
+                tool_id="process.create", source="function", mode="write",
+                scopes=["process.write"], enabled=True,
+                meta={"description": "Create a new business process document with steps, roles, and trigger"},
+            ),
+            "process.update": ToolDefinition(
+                tool_id="process.update", source="function", mode="write",
+                scopes=["process.write"], enabled=True,
+                meta={"description": "Update an existing process document by ID"},
+            ),
+            # ---- Task management ----
+            "tasks.create": ToolDefinition(
+                tool_id="tasks.create", source="function", mode="write",
+                scopes=["tasks.write"], enabled=True,
+                meta={"description": "Create a new task with optional OKR/process linkage"},
+            ),
+            "tasks.update": ToolDefinition(
+                tool_id="tasks.update", source="function", mode="write",
+                scopes=["tasks.write"], enabled=True,
+                meta={"description": "Update an existing task's status, assignee, due date, or other fields"},
+            ),
+            "tasks.list": ToolDefinition(
+                tool_id="tasks.list", source="function", mode="read",
+                scopes=["tasks.read"], enabled=True,
+                meta={"description": "List tasks filtered by assignee, workspace, status, or due date"},
+            ),
             # Phase 6: Knowledge
             "confluence.read": ToolDefinition(
                 tool_id="confluence.read", source="function", mode="read_only",

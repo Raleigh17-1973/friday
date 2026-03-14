@@ -4,10 +4,13 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart2,
+  Bell,
+  CheckSquare,
   ChevronDown,
   FileText,
   FlaskConical,
   Folders,
+  Home,
   Settings,
   Target,
   Workflow,
@@ -78,6 +81,8 @@ type NavItem = {
 };
 
 const NAV_ITEMS: NavItem[] = [
+  { label: "Home",            href: "/home",       icon: Home          },
+  { label: "Tasks",           href: "/tasks",      icon: CheckSquare   },
   { label: "Process Library", href: "/processes",  icon: Workflow      },
   { label: "Documents",       href: "/documents",  icon: FileText      },
   { label: "Analytics",       href: "/analytics",  icon: BarChart2     },
@@ -130,6 +135,7 @@ function LeftRail({
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [userRole, setUserRole] = useState<UserRole>("member");
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -142,6 +148,19 @@ function LeftRail({
       .then((r) => r.ok ? r.json() : [])
       .then((data: WorkspaceItem[]) => setWorkspaces(Array.isArray(data) ? data.slice(0, 6) : []))
       .catch(() => {});
+  }, []);
+
+  // Poll unread notification count every 60 seconds
+  useEffect(() => {
+    const fetchCount = () => {
+      fetch(`${BACKEND}/notifications/unread-count?recipient_id=user-1`)
+        .then((r) => r.ok ? r.json() : { count: 0 })
+        .then((d: { count?: number }) => setUnreadCount(d.count ?? 0))
+        .catch(() => {});
+    };
+    fetchCount();
+    const timer = setInterval(fetchCount, 60_000);
+    return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -186,7 +205,15 @@ function LeftRail({
 
   return (
     <aside className="left-rail" aria-label="Threads and saved context">
-      <header className="rail-header">Friday</header>
+      <header className="rail-header">
+        <span>Friday</span>
+        <a href="/home" className="notif-bell" title="Notifications" aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}>
+          <Bell size={16} strokeWidth={1.75} />
+          {unreadCount > 0 && (
+            <span className="notif-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>
+          )}
+        </a>
+      </header>
 
       <nav className="rail-nav" aria-label="Main navigation">
         {NAV_ITEMS.filter(({ roles }) => !roles || roles.includes(userRole)).map(({ label, href, icon: Icon }) => (
@@ -342,6 +369,13 @@ function MessageRow({
     size_bytes: number; format: string; download_url: string;
   } | undefined;
 
+  const writeActions = message.meta?.write_actions as Array<{
+    tool: string;
+    ok: boolean;
+    output: Record<string, unknown>;
+    error?: string | null;
+  }> | undefined;
+
   const runId = message.meta?.run_id as string | undefined;
 
   const handleCopy = async () => {
@@ -435,6 +469,30 @@ function MessageRow({
           format={genDoc.format}
           downloadUrl={genDoc.download_url}
         />
+      )}
+      {writeActions && writeActions.length > 0 && (
+        <div className="write-action-chips" aria-label="Actions taken">
+          {writeActions.map((action, i) => {
+            const label = (() => {
+              const out = action.output || {};
+              if (action.tool === "okrs.create" && out.title) return `Created OKR: ${out.title}`;
+              if (action.tool === "process.create" && out.process_name) return `Created Process: ${out.process_name}`;
+              if (action.tool === "decisions.log") return "Logged decision";
+              if (action.tool === "okrs.update_kr") return "Updated Key Result";
+              if (action.tool === "process.update" && out.process_name) return `Updated Process: ${out.process_name}`;
+              return action.tool;
+            })();
+            return (
+              <span
+                key={i}
+                className={`write-action-chip${action.ok ? "" : " write-action-chip-error"}`}
+                title={action.ok ? undefined : (action.error ?? "Failed")}
+              >
+                {action.ok ? "✅" : "⚠️"} {label}
+              </span>
+            );
+          })}
+        </div>
       )}
       <time dateTime={message.timestamp}>{new Date(message.timestamp).toLocaleTimeString()}</time>
 

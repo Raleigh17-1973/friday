@@ -4,8 +4,11 @@ import React from "react";
 import Link from "next/link";
 import {
   BarChart2,
+  Bell,
+  CheckSquare,
   FileText,
   Folders,
+  Home,
   MessageSquare,
   Settings,
   Target,
@@ -32,7 +35,9 @@ type NavItem = {
 };
 
 const NAV_ITEMS: NavItem[] = [
+  { href: "/home",       icon: Home,          label: "Home"           },
   { href: "/",           icon: MessageSquare, label: "Chat"           },
+  { href: "/tasks",      icon: CheckSquare,   label: "Tasks"          },
   { href: "/processes",  icon: Workflow,      label: "Process Library" },
   { href: "/documents",  icon: FileText,      label: "Documents"       },
   { href: "/analytics",  icon: BarChart2,     label: "Analytics"       },
@@ -72,6 +77,8 @@ export function PageShell({
 }: PageShellProps) {
   const [currentPath, setCurrentPath] = React.useState("");
   const [userRole, setUserRole] = React.useState<UserRole>("member");
+  const [unreadCount, setUnreadCount] = React.useState(0);
+  const BACKEND_URL = process.env.NEXT_PUBLIC_FRIDAY_BACKEND_URL ?? "http://127.0.0.1:8000";
 
   React.useEffect(() => {
     setCurrentPath(window.location.pathname);
@@ -81,6 +88,19 @@ export function PageShell({
     window.addEventListener("friday_role_changed", onRoleChange);
     return () => window.removeEventListener("friday_role_changed", onRoleChange);
   }, []);
+
+  // Poll unread notification count every 60 seconds
+  React.useEffect(() => {
+    const fetchCount = () => {
+      fetch(`${BACKEND_URL}/notifications/unread-count?recipient_id=user-1`)
+        .then((r) => r.ok ? r.json() : { count: 0 })
+        .then((d: { count?: number }) => setUnreadCount(d.count ?? 0))
+        .catch(() => {});
+    };
+    fetchCount();
+    const timer = setInterval(fetchCount, 60_000);
+    return () => clearInterval(timer);
+  }, [BACKEND_URL]);
 
   return (
     <div className="page-shell">
@@ -97,17 +117,24 @@ export function PageShell({
           gap: "0.125rem",
         }}
       >
-        {/* Logo */}
+        {/* Logo + notification bell */}
         <div
           style={{
             padding: "0.5rem 1rem 1.25rem",
-            fontWeight: 700,
-            fontSize: "1.125rem",
-            color: "var(--accent)",
-            letterSpacing: "-0.02em",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
           }}
         >
-          Friday
+          <span style={{ fontWeight: 700, fontSize: "1.125rem", color: "var(--accent)", letterSpacing: "-0.02em" }}>
+            Friday
+          </span>
+          <Link href="/home" className="notif-bell" title="Notifications" aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}>
+            <Bell size={16} strokeWidth={1.75} />
+            {unreadCount > 0 && (
+              <span className="notif-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>
+            )}
+          </Link>
         </div>
 
         {/* Nav Links */}

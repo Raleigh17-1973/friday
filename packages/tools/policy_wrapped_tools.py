@@ -59,13 +59,17 @@ class ToolExecutor:
         if tool_name.startswith("analytics."):
             return self._analytics_tool(tool_name, args)
 
-        # Phase 5: Jira, Linear, OKRs (stubs)
+        # Phase 5: Jira, Linear, OKRs
         if tool_name.startswith("jira."):
             return self._integration_stub(tool_name, args, "Jira")
         if tool_name.startswith("linear."):
             return self._integration_stub(tool_name, args, "Linear")
         if tool_name.startswith("okrs."):
             return self._okrs_tool(tool_name, args)
+        if tool_name.startswith("process."):
+            return self._process_tool(tool_name, args)
+        if tool_name.startswith("tasks."):
+            return self._tasks_tool(tool_name, args)
 
         # Phase 6: Knowledge & Brand (stubs)
         if tool_name.startswith("confluence."):
@@ -575,12 +579,200 @@ class ToolExecutor:
 
         db_path = self._repo_root / "data" / "friday_okrs.sqlite3"
         svc = OKRService(db_path=db_path)
+
         if tool_name == "okrs.status":
             objectives = svc.list_objectives()
             return ToolResult(tool_name=tool_name, ok=True, output={
                 "objectives": [{"id": o.objective_id, "title": o.title, "progress": o.progress} for o in objectives]
             })
+
+        if tool_name == "okrs.create":
+            try:
+                obj = svc.create_objective(
+                    title=str(args.get("title", "New Objective")),
+                    period=str(args.get("period", "Q1")),
+                    org_id=str(args.get("org_id", "org-1")),
+                    description=str(args.get("description", "")),
+                    owner=str(args.get("owner", "")),
+                    level=str(args.get("level", "team")),
+                    parent_id=args.get("parent_id"),
+                    workspace_id=args.get("workspace_id"),
+                    collaborators=list(args.get("collaborators") or []),
+                    rationale=str(args.get("rationale", "")),
+                )
+                return ToolResult(tool_name=tool_name, ok=True, output={
+                    "obj_id": obj.objective_id,
+                    "title": obj.title,
+                    "period": obj.period,
+                    "level": obj.level,
+                    "created": True,
+                })
+            except Exception as exc:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        if tool_name == "okrs.update_kr":
+            try:
+                kr_id = str(args.get("kr_id", ""))
+                if not kr_id:
+                    return ToolResult(tool_name=tool_name, ok=False, output={}, error="kr_id is required")
+                kr = svc.update_key_result(
+                    kr_id=kr_id,
+                    current_value=args.get("current_value"),
+                    target_value=args.get("target_value"),
+                    title=args.get("title"),
+                    unit=args.get("unit"),
+                )
+                return ToolResult(tool_name=tool_name, ok=True, output={
+                    "kr_id": kr.kr_id if kr else kr_id,
+                    "updated": True,
+                })
+            except Exception as exc:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
         return ToolResult(tool_name=tool_name, ok=False, output={}, error="unknown okrs sub-tool")
+
+    # ---- Process management ----
+
+    def _process_tool(self, tool_name: str, args: dict[str, Any]) -> ToolResult:
+        try:
+            from packages.process.service import ProcessService
+            from packages.common.models import ProcessDocument, ProcessStep
+        except ImportError as exc:
+            return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        db_path = self._repo_root / "data" / "friday_processes.sqlite3"
+        svc = ProcessService(db_path=db_path)
+
+        if tool_name == "process.create":
+            try:
+                raw_steps = args.get("steps") or []
+                steps = []
+                for i, s in enumerate(raw_steps):
+                    if isinstance(s, dict):
+                        steps.append(ProcessStep(
+                            id=str(s.get("id", f"step_{i+1}")),
+                            name=str(s.get("name", s.get("title", f"Step {i+1}"))),
+                            owner=str(s.get("owner", s.get("owner_role", ""))),
+                            inputs=list(s.get("inputs", [])),
+                            outputs=list(s.get("outputs", [])),
+                            tools=list(s.get("tools", [])),
+                            sla=str(s.get("sla", s.get("duration_estimate", ""))),
+                        ))
+                    elif isinstance(s, str):
+                        steps.append(ProcessStep(id=f"step_{i+1}", name=s, owner=""))
+
+                doc = ProcessDocument(
+                    id="",
+                    org_id=str(args.get("org_id", "org-1")),
+                    process_name=str(args.get("process_name", args.get("name", "New Process"))),
+                    trigger=str(args.get("trigger", "")),
+                    steps=steps,
+                    decision_points=list(args.get("decision_points", [])),
+                    roles=list(args.get("roles", [])),
+                    tools=list(args.get("tools", [])),
+                    exceptions=list(args.get("exceptions", [])),
+                    kpis=list(args.get("kpis", [])),
+                    mermaid_flowchart=str(args.get("mermaid_flowchart", "")),
+                    mermaid_swimlane=str(args.get("mermaid_swimlane", "")),
+                    completeness_score=0.0,
+                    status="draft",
+                )
+                created = svc.create(doc)
+                return ToolResult(tool_name=tool_name, ok=True, output={
+                    "process_id": created.id,
+                    "process_name": created.process_name,
+                    "created": True,
+                })
+            except Exception as exc:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        if tool_name == "process.update":
+            try:
+                process_id = str(args.get("process_id", ""))
+                if not process_id:
+                    return ToolResult(tool_name=tool_name, ok=False, output={}, error="process_id is required")
+                changes = {k: v for k, v in args.items() if k not in ("process_id", "bump", "author") and v is not None}
+                bump = str(args.get("bump", "patch"))
+                author = str(args.get("author", "friday"))
+                updated = svc.update(process_id, changes=changes, bump=bump, author=author)
+                return ToolResult(tool_name=tool_name, ok=True, output={
+                    "process_id": process_id,
+                    "updated": True,
+                    "process_name": updated.process_name if updated else "",
+                })
+            except Exception as exc:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        return ToolResult(tool_name=tool_name, ok=False, output={}, error="unknown process sub-tool")
+
+    # ---- Tasks ----
+
+    def _tasks_tool(self, tool_name: str, args: dict[str, Any]) -> ToolResult:
+        try:
+            from packages.tasks import TaskService
+        except ImportError as exc:
+            return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        db_path = self._repo_root / "data" / "friday_tasks.sqlite3"
+        svc = TaskService(db_path=db_path)
+
+        if tool_name == "tasks.create":
+            try:
+                task = svc.create(
+                    title=str(args.get("title", "Untitled task")),
+                    description=str(args.get("description", "")),
+                    assignee=args.get("assignee"),
+                    due_date=args.get("due_date"),
+                    priority=str(args.get("priority", "medium")),
+                    status=str(args.get("status", "open")),
+                    workspace_id=args.get("workspace_id"),
+                    okr_id=args.get("okr_id"),
+                    kr_id=args.get("kr_id"),
+                    process_id=args.get("process_id"),
+                    created_by=str(args.get("created_by", "friday")),
+                )
+                return ToolResult(tool_name=tool_name, ok=True, output={
+                    "task_id": task.task_id,
+                    "title": task.title,
+                    "created": True,
+                })
+            except Exception as exc:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        if tool_name == "tasks.update":
+            try:
+                task_id = str(args.get("task_id", ""))
+                if not task_id:
+                    return ToolResult(tool_name=tool_name, ok=False, output={}, error="task_id is required")
+                changes = {k: v for k, v in args.items() if k != "task_id" and v is not None}
+                updated = svc.update(task_id, **changes)
+                return ToolResult(tool_name=tool_name, ok=True, output={
+                    "task_id": task_id,
+                    "updated": True,
+                    "title": updated.title if updated else "",
+                })
+            except Exception as exc:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        if tool_name == "tasks.list":
+            try:
+                tasks = svc.list(
+                    assignee=args.get("assignee"),
+                    workspace_id=args.get("workspace_id"),
+                    status=args.get("status"),
+                    priority=args.get("priority"),
+                    due_before=args.get("due_before"),
+                    okr_id=args.get("okr_id"),
+                    limit=int(args.get("limit", 50)),
+                )
+                return ToolResult(tool_name=tool_name, ok=True, output={
+                    "tasks": [t.to_dict() for t in tasks],
+                    "count": len(tasks),
+                })
+            except Exception as exc:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        return ToolResult(tool_name=tool_name, ok=False, output={}, error="unknown tasks sub-tool")
 
     # ---- Phase 6: Brand ----
 

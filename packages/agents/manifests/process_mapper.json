@@ -9,7 +9,9 @@
     "Request is purely financial analysis, strategy, or data analysis with no process documentation need."
   ],
   "tools_allowed": [
-    "memory.search"
+    "memory.search",
+    "process.create",
+    "process.update"
   ],
   "risk_level": "low",
   "system_prompt_path": "packages/agents/prompts/process_mapper.md",

@@ -15,7 +15,7 @@
     "Request involves financial modeling or forecasting without OKR angle",
     "Request is about tracking task completion rather than outcome measurement"
   ],
-  "tools_allowed": ["docs.retrieve", "okrs.status"],
+  "tools_allowed": ["docs.retrieve", "okrs.status", "okrs.create", "okrs.update_kr"],
   "risk_level": "low",
   "system_prompt_path": "packages/agents/prompts/okr_coach.md",
   "input_schema": "packages/agents/schemas/specialist_input.schema.json",

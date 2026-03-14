@@ -239,7 +239,9 @@ class FridayManager:
 
         planning_message = self._resolve_planning_message(request.message, memory_bundle.conversation)
         planning_message = self._inject_recalled_context(
-            planning_message, request.org_id, request.message, episodic=memory_bundle.episodic
+            planning_message, request.org_id, request.message,
+            episodic=memory_bundle.episodic,
+            workspace_id=getattr(request, "workspace_id", None),
         )
         plan = build_plan(planning_message, llm=self._llm)
         validate_required_fields(plan, PLANNER_OUTPUT_SCHEMA, "PlannerOutput")
@@ -267,6 +269,39 @@ class FridayManager:
 
         final_answer = synthesize(plan, memos, critic_report, llm=self._llm)
         validate_required_fields(final_answer, FINAL_ANSWER_PACKAGE_SCHEMA, "FinalAnswerPackage")
+
+        # Phase 2b-write: execute tool_requests declared by specialists
+        write_actions: list[dict] = []
+        for memo in memos:
+            for req in getattr(memo, "tool_requests", []):
+                tool_name = req.get("tool", "")
+                req_args = req.get("args", {})
+                if not tool_name:
+                    continue
+                try:
+                    result = self._tool_executor.run(tool_name, req_args)
+                    write_actions.append({
+                        "tool": tool_name,
+                        "args": req_args,
+                        "specialist": memo.specialist_id,
+                        "ok": result.ok,
+                        "output": result.output,
+                        "error": result.error,
+                    })
+                    if result.ok:
+                        _log.info("Write action %s succeeded: %s", tool_name, result.output)
+                    else:
+                        _log.warning("Write action %s failed: %s", tool_name, result.error)
+                except Exception as exc:
+                    _log.warning("Write action %s raised: %s", tool_name, exc)
+                    write_actions.append({
+                        "tool": tool_name,
+                        "args": req_args,
+                        "specialist": memo.specialist_id,
+                        "ok": False,
+                        "output": {},
+                        "error": str(exc),
+                    })
 
         # Phase 2b: iterative refinement — if confidence is low and LLM is available,
         # run a second synthesis pass with the critic's objections injected more forcefully
@@ -360,6 +395,7 @@ class FridayManager:
                 "conversation_events": len(memory_bundle.conversation),
                 "episodic_items": len(memory_bundle.episodic),
             },
+            "write_actions": write_actions,
             "observability": run_cost,
         }
 
@@ -384,7 +420,9 @@ class FridayManager:
             )
             planning_message = self._resolve_planning_message(request.message, memory_bundle.conversation)
             planning_message = self._inject_recalled_context(
-                planning_message, request.org_id, request.message, episodic=memory_bundle.episodic
+                planning_message, request.org_id, request.message,
+                episodic=memory_bundle.episodic,
+                workspace_id=getattr(request, "workspace_id", None),
             )
 
             # Provenance short-circuit for streaming path
@@ -442,6 +480,35 @@ class FridayManager:
                 confidence=0.85 if self._llm else 0.55,
             )
 
+            # Execute tool_requests from specialist memos (streaming path)
+            stream_write_actions: list[dict] = []
+            for memo in memos:
+                for req in getattr(memo, "tool_requests", []):
+                    tool_name = req.get("tool", "")
+                    req_args = req.get("args", {})
+                    if not tool_name:
+                        continue
+                    try:
+                        result = self._tool_executor.run(tool_name, req_args)
+                        stream_write_actions.append({
+                            "tool": tool_name,
+                            "args": req_args,
+                            "specialist": memo.specialist_id,
+                            "ok": result.ok,
+                            "output": result.output,
+                            "error": result.error,
+                        })
+                    except Exception as exc:
+                        _log.warning("Streaming write action %s raised: %s", tool_name, exc)
+                        stream_write_actions.append({
+                            "tool": tool_name,
+                            "args": req_args,
+                            "specialist": memo.specialist_id,
+                            "ok": False,
+                            "output": {},
+                            "error": str(exc),
+                        })
+
             self._memory.append_conversation(
                 request.conversation_id,
                 {"run_id": run_id, "user": request.message, "final_answer": asdict(final_answer), "selected_agents": experts},
@@ -459,6 +526,7 @@ class FridayManager:
                 "output_format": plan.output_format,
                 "domains": plan.domains_involved,
                 "llm_active": self._llm is not None,
+                "write_actions": stream_write_actions,
             }
         except Exception as exc:
             _log.exception("Streaming run %s failed: %s", run_id, exc)
@@ -542,7 +610,9 @@ class FridayManager:
         return hints[:3]  # cap to avoid prompt bloat
 
     def _inject_recalled_context(
-        self, planning_message: str, org_id: str, query: str, episodic: list[dict] | None = None
+        self, planning_message: str, org_id: str, query: str,
+        episodic: list[dict] | None = None,
+        workspace_id: str | None = None,
     ) -> str:
         """Prepend relevant memories + approved-pattern hints to the planning message.
 
@@ -550,6 +620,28 @@ class FridayManager:
         approved episodic patterns. Silently skips on any error — recall is best-effort.
         """
         parts: list[str] = []
+
+        # 0. Workspace context injection — when the user is operating in a specific workspace
+        if workspace_id:
+            try:
+                from packages.workspaces import WorkspaceService
+                from packages.okrs import OKRService
+                from pathlib import Path
+                repo_root = self._tool_executor._repo_root
+                ws_svc = WorkspaceService(db_path=repo_root / "data" / "friday_workspaces.sqlite3")
+                ws_summary = ws_svc.get_context_summary(workspace_id)
+                if ws_summary:
+                    okr_svc = OKRService(db_path=repo_root / "data" / "friday_okrs.sqlite3")
+                    ws_okrs = okr_svc.list_objectives(org_id=org_id, workspace_id=workspace_id, parent_id=None)
+                    okr_titles = [o.title for o in ws_okrs[:5]]
+                    okr_text = ", ".join(okr_titles) if okr_titles else "none linked"
+                    parts.append(
+                        f"WORKSPACE CONTEXT (current workspace: {workspace_id}):\n"
+                        f"{ws_summary}\n\n"
+                        f"Linked OKRs: {okr_text}"
+                    )
+            except Exception as exc:
+                _log.debug("workspace context injection failed (non-fatal): %s", exc)
 
         # 1. Episodic learning hints from approved past runs
         if episodic:
