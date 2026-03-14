@@ -303,6 +303,24 @@ def reject(approval_id: str) -> dict:
     return asdict(req)
 
 
+@app.get("/memories")
+def list_memories(org_id: str = "org-1") -> dict:
+    """Return all stored semantic memories for an org as a flat key/value list."""
+    semantic: dict = service.memory._semantic_by_org.get(org_id, {})
+    memories = [{"key": k, "value": str(v)} for k, v in semantic.items()]
+    return {"org_id": org_id, "memories": memories, "count": len(memories)}
+
+
+@app.delete("/memories/{org_id}/{key}")
+def delete_memory(org_id: str, key: str) -> dict:
+    """Remove a single semantic memory entry."""
+    store = service.memory._semantic_by_org.get(org_id, {})
+    if key not in store:
+        raise HTTPException(status_code=404, detail="memory key not found")
+    del service.memory._semantic_by_org[org_id][key]
+    return {"deleted": key}
+
+
 @app.get("/memories/search")
 def search_memories(org_id: str, q: str) -> dict:
     return service.memory.search(org_id=org_id, query=q)

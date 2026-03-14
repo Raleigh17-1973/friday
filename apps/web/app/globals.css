@@ -1,7 +1,9 @@
 :root {
+  /* ── Core palette ─────────────────────────────────────────── */
   --bg: #f4f6f8;
   --surface: #ffffff;
   --surface-2: #eef2f5;
+  --surface-raised: #ffffff;
   --text: #102031;
   --muted: #4e657a;
   --line: #d5dee7;
@@ -16,6 +18,12 @@
   --space-4: 20px;
   --space-5: 28px;
   --focus: #0f5cc0;
+
+  /* ── Semantic aliases (used in component CSS) ─────────────── */
+  --border: var(--line);
+  --text-muted: var(--muted);
+  --warning: #b45309;
+  --info: #1d4ed8;
 }
 
 * {
@@ -2488,4 +2496,422 @@ input:focus-visible {
   flex-shrink: 0;
   display: flex;
   justify-content: flex-end;
+}
+
+/* ── Reasoning Trace ───────────────────────────────────────────────────── */
+.reasoning-trace {
+  margin-top: 0.5rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.375rem;
+}
+
+.reasoning-trace-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  padding: 0.25rem 0;
+  transition: color 0.15s;
+}
+
+.reasoning-trace-toggle:hover { color: var(--text); }
+
+.reasoning-trace-chevron {
+  font-size: 0.625rem;
+  line-height: 1;
+}
+
+.reasoning-trace-body {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.reasoning-trace-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.reasoning-trace-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.reasoning-trace-text {
+  font-size: 0.8125rem;
+  color: var(--text);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.reasoning-trace-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  font-size: 0.8125rem;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.reasoning-trace-empty {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+/* ── Command Palette ───────────────────────────────────────────────────── */
+.palette-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+  z-index: 9000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 14vh;
+}
+
+.palette-modal {
+  background: var(--surface-raised, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.22), 0 4px 16px rgba(0,0,0,0.12);
+  width: 100%;
+  max-width: 560px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+}
+
+.palette-search-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.palette-search-icon {
+  font-size: 1rem;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.palette-search-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  font-size: 0.9375rem;
+  color: var(--text);
+  font-family: inherit;
+}
+
+.palette-search-input::placeholder { color: var(--text-muted); }
+
+.palette-results {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.375rem 0;
+}
+
+.palette-group-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 0.5rem 1rem 0.25rem;
+}
+
+.palette-result {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.5rem 1rem;
+  font-family: inherit;
+  font-size: 0.875rem;
+  color: var(--text);
+  transition: background 0.1s;
+}
+
+.palette-result:hover,
+.palette-result[data-active="true"] {
+  background: var(--surface);
+}
+
+.palette-result-icon { font-size: 1rem; flex-shrink: 0; }
+
+.palette-result-label { flex: 1; font-weight: 500; }
+
+.palette-result-sublabel {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.palette-empty {
+  padding: 2rem 1rem;
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.palette-footer {
+  display: flex;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+
+.palette-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.palette-key kbd {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  padding: 0.1rem 0.3rem;
+  font-size: 0.6875rem;
+  font-family: monospace;
+  line-height: 1.4;
+}
+
+/* ── Command Palette (cmd-*) ───────────────────────────────────────────── */
+.cmd-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+  z-index: 9000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 14vh;
+}
+
+.cmd-palette {
+  background: var(--bg, #fff);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.22), 0 4px 16px rgba(0,0,0,0.12);
+  width: 100%;
+  max-width: 560px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+}
+
+.cmd-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.cmd-search-icon {
+  font-size: 1.125rem;
+  opacity: 0.5;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.cmd-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  font-size: 0.9375rem;
+  color: var(--text);
+  font-family: inherit;
+}
+
+.cmd-input::placeholder { color: var(--text-muted); }
+
+.cmd-esc-hint {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  padding: 0.1rem 0.375rem;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  font-family: monospace;
+  flex-shrink: 0;
+}
+
+.cmd-results {
+  flex: 1;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0.375rem 0;
+}
+
+.cmd-group-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 0.5rem 1rem 0.25rem;
+}
+
+.cmd-results ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cmd-item {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  padding: 0.4375rem 1rem;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.cmd-item:hover,
+.cmd-item-active {
+  background: var(--surface);
+}
+
+.cmd-item-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+  width: 1.25rem;
+  text-align: center;
+}
+
+.cmd-item-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cmd-item-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmd-item-sublabel {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmd-item-arrow {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.cmd-empty {
+  padding: 2rem 1rem;
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.cmd-footer {
+  display: flex;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+
+.cmd-footer kbd {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  padding: 0.05rem 0.3rem;
+  font-family: monospace;
+  font-size: 0.6875rem;
+  margin-right: 0.25rem;
+}
+
+/* ── Approval Cards ────────────────────────────────────────────────────── */
+.approval-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.approval-card {
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.approval-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.approval-card-type {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: capitalize;
+}
+
+.approval-card-reason {
+  font-size: 0.8125rem;
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.approval-card-summary {
+  font-size: 0.8125rem;
+  color: var(--text);
+  margin: 0;
+  line-height: 1.5;
+  border-left: 2px solid var(--line);
+  padding-left: 0.5rem;
+}
+
+.approval-card-actions {
+  display: flex;
+  gap: 0.375rem;
+  margin-top: 0.25rem;
 }

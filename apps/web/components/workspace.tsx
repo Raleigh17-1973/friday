@@ -17,6 +17,7 @@ const BACKEND = process.env.NEXT_PUBLIC_FRIDAY_BACKEND_URL ?? "http://127.0.0.1:
 
 import { useChatState } from "@/components/use-chat-state";
 import { MarkdownMessage } from "@/components/markdown-message";
+import { CommandPalette } from "@/components/command-palette";
 import type { ChatMode, ConversationThread, FridayMessage } from "@/lib/types";
 
 // Mermaid is browser-only (DOM required) — load dynamically, no SSR
@@ -398,7 +399,140 @@ function MessageRow({
           </button>
         </div>
       )}
+
+      {/* Reasoning trace — collapsed by default, only when we have a run_id */}
+      {isFriday && message.text && runId && (
+        <ReasoningTrace runId={runId} />
+      )}
     </article>
+  );
+}
+
+// ── Reasoning Trace ───────────────────────────────────────────────────────
+type RunTrace = {
+  run_id?: string;
+  problem_statement?: string;
+  domains_involved?: string[];
+  selected_agents?: string[];
+  confidence?: number;
+  key_assumptions?: string[];
+  major_risks?: string[];
+  risk_level?: string;
+  status?: string;
+};
+
+const AGENT_DISPLAY: Record<string, string> = {
+  chief_of_staff_strategist: "Chief of Staff",
+  finance:                   "Finance",
+  legal_compliance:          "Legal / Compliance",
+  hr_people:                 "HR & People",
+  marketing_brand:           "Marketing & Brand",
+  sales_revenue:             "Sales & Revenue",
+  operations:                "Operations",
+  technology:                "Technology",
+  risk_management:           "Risk Management",
+  customer_success_support:  "Customer Success",
+  project_manager:           "Project Manager",
+  data_analyst:              "Data Analyst",
+  writer_scribe:             "Writer / Scribe",
+  executive_coach:           "Executive Coach",
+  ai_strategy:               "AI Strategy",
+  internal_comms:            "Internal Comms",
+  public_relations:          "Public Relations",
+  mergers_acquisitions:      "M&A",
+  okr_coach:                 "OKR Coach",
+};
+
+function ReasoningTrace({ runId }: { runId: string }) {
+  const [open, setOpen]     = useState(false);
+  const [trace, setTrace]   = useState<RunTrace | null>(null);
+  const [loading, setLoading] = useState(false);
+  const fetched = useRef(false);
+
+  const handleOpen = () => {
+    setOpen((v) => !v);
+    if (!fetched.current && !loading) {
+      fetched.current = true;
+      setLoading(true);
+      fetch(`${BACKEND}/runs/${runId}`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((data: RunTrace | null) => setTrace(data))
+        .catch(() => setTrace(null))
+        .finally(() => setLoading(false));
+    }
+  };
+
+  return (
+    <div className="reasoning-trace">
+      <button
+        className="reasoning-trace-toggle"
+        onClick={handleOpen}
+        aria-expanded={open}
+        type="button"
+      >
+        <span className="reasoning-trace-chevron" aria-hidden="true">{open ? "▾" : "▸"}</span>
+        How Friday reasoned through this
+      </button>
+      {open && (
+        <div className="reasoning-trace-body">
+          {loading ? (
+            <p className="reasoning-trace-empty">Loading trace…</p>
+          ) : !trace ? (
+            <p className="reasoning-trace-empty">Trace not available.</p>
+          ) : (
+            <>
+              {trace.problem_statement && (
+                <div className="reasoning-trace-section">
+                  <div className="reasoning-trace-label">Problem Statement</div>
+                  <p className="reasoning-trace-text">{trace.problem_statement}</p>
+                </div>
+              )}
+              {trace.selected_agents && trace.selected_agents.length > 0 && (
+                <div className="reasoning-trace-section">
+                  <div className="reasoning-trace-label">Specialists Consulted</div>
+                  <ul className="reasoning-trace-list">
+                    {trace.selected_agents.map((a) => (
+                      <li key={a}>{AGENT_DISPLAY[a] ?? a}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {trace.confidence != null && (
+                <div className="reasoning-trace-section">
+                  <div className="reasoning-trace-label">Confidence</div>
+                  <p className="reasoning-trace-text">
+                    {trace.confidence >= 0.85 ? "High" : trace.confidence >= 0.65 ? "Moderate" : "Review recommended"}
+                    {" "}({(trace.confidence * 100).toFixed(0)}%)
+                  </p>
+                </div>
+              )}
+              {trace.key_assumptions && trace.key_assumptions.length > 0 && (
+                <div className="reasoning-trace-section">
+                  <div className="reasoning-trace-label">Key Assumptions</div>
+                  <ul className="reasoning-trace-list">
+                    {trace.key_assumptions.map((a, i) => <li key={i}>{a}</li>)}
+                  </ul>
+                </div>
+              )}
+              {trace.major_risks && trace.major_risks.length > 0 && (
+                <div className="reasoning-trace-section">
+                  <div className="reasoning-trace-label">Major Risks</div>
+                  <ul className="reasoning-trace-list">
+                    {trace.major_risks.map((r, i) => <li key={i}>{r}</li>)}
+                  </ul>
+                </div>
+              )}
+              {trace.risk_level && (
+                <div className="reasoning-trace-section">
+                  <div className="reasoning-trace-label">Risk Level</div>
+                  <p className="reasoning-trace-text" style={{ textTransform: "capitalize" }}>{trace.risk_level}</p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -674,7 +808,9 @@ function Composer({
 type Approval = {
   approval_id: string;
   request_type: string;
-  payload: Record<string, unknown>;
+  reason?: string;
+  action_summary?: string;
+  payload?: Record<string, unknown>;
   status: string;
   created_at: string;
 };
@@ -703,7 +839,11 @@ function RightRail({
     setApprovalsLoading(true);
     fetch(`${BACKEND}/approvals`)
       .then((res) => res.json())
-      .then((data: unknown) => setApprovals(Array.isArray(data) ? (data as Approval[]) : []))
+      .then((data: unknown) => {
+        const obj = data as { approvals?: Approval[] } | Approval[];
+        const list = Array.isArray(obj) ? obj : (obj as { approvals?: Approval[] })?.approvals;
+        setApprovals(Array.isArray(list) ? list : []);
+      })
       .catch(() => setApprovals([]))
       .finally(() => setApprovalsLoading(false));
   }, []);
@@ -814,11 +954,20 @@ function RightRail({
                   ) : approvals.length === 0 ? (
                     <p className="rail-empty">No pending approvals.</p>
                   ) : (
-                    <ul>
+                    <ul className="approval-list">
                       {approvals.map((approval) => (
-                        <li key={approval.approval_id} className="approval-item">
-                          <span className="approval-type">{approval.request_type}</span>
-                          <div className="approval-actions">
+                        <li key={approval.approval_id} className="approval-card">
+                          <div className="approval-card-header">
+                            <span className="badge badge-warning" style={{ fontSize: "0.6875rem" }}>Pending</span>
+                            <span className="approval-card-type">{approval.request_type.replace(/_/g, " ")}</span>
+                          </div>
+                          {approval.reason && (
+                            <p className="approval-card-reason">{approval.reason}</p>
+                          )}
+                          {approval.action_summary && (
+                            <p className="approval-card-summary">{approval.action_summary}</p>
+                          )}
+                          <div className="approval-card-actions">
                             <button
                               className="btn btn-primary btn-sm"
                               onClick={() => handleApproval(approval.approval_id, "approve")}
@@ -881,6 +1030,23 @@ export function Workspace() {
       latency: meta.latency,
     };
   }, [messages]);
+
+  const [showPalette, setShowPalette] = useState(false);
+
+  // Cmd+K / Ctrl+K to open command palette
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setShowPalette((v) => !v);
+      }
+      if (e.key === "Escape") {
+        setShowPalette(false);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
 
   const activeThread = threads.find((thread) => thread.id === activeThreadId) ?? threads[0];
   const showReload = !!process.env.NEXT_PUBLIC_ADMIN_API_KEY;
@@ -968,6 +1134,21 @@ export function Workspace() {
         />
       </section>
       <RightRail lastRunMeta={lastRunMeta} />
+
+      {showPalette && (
+        <CommandPalette
+          threads={threads}
+          onSelectThread={(id) => {
+            setActiveThreadId(id);
+            setShowPalette(false);
+          }}
+          onNewChat={() => {
+            createThread();
+            setShowPalette(false);
+          }}
+          onClose={() => setShowPalette(false)}
+        />
+      )}
     </main>
   );
 }

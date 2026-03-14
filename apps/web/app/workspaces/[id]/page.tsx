@@ -64,6 +64,14 @@ function ProgressBar({ value }: { value: number }) {
   );
 }
 
+type PendingApproval = {
+  approval_id: string;
+  request_type: string;
+  reason?: string;
+  action_summary?: string;
+  status: string;
+};
+
 export default function WorkspaceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -75,6 +83,7 @@ export default function WorkspaceDetailPage() {
   const [addMemberForm, setAddMemberForm] = useState({ user_id: "", role: "editor" });
   const [addingMember, setAddingMember] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
+  const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
 
   async function load() {
     setLoading(true);
@@ -102,7 +111,17 @@ export default function WorkspaceDetailPage() {
     } catch { /* non-critical */ }
   }
 
-  useEffect(() => { load(); loadOKRs(); }, [id]);
+  async function loadApprovals() {
+    try {
+      const res = await fetch(`${API}/approvals`);
+      if (!res.ok) return;
+      const data = await res.json() as { approvals?: PendingApproval[] } | PendingApproval[];
+      const list = Array.isArray(data) ? data : (data as { approvals?: PendingApproval[] }).approvals ?? [];
+      setPendingApprovals(list.filter((a) => a.status === "pending"));
+    } catch { /* non-critical */ }
+  }
+
+  useEffect(() => { load(); loadOKRs(); loadApprovals(); }, [id]);
 
   async function addMember(e: React.FormEvent) {
     e.preventDefault();
@@ -161,13 +180,33 @@ export default function WorkspaceDetailPage() {
       {/* Overview tab */}
       {activeTab === "overview" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+
+          {/* Pending approvals banner */}
+          {pendingApprovals.length > 0 && (
+            <div className="card" style={{ border: "1px solid #f59e0b", background: "#fffbeb" }}>
+              <div className="card-body" style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                <span style={{ fontSize: "1.25rem" }}>⏳</span>
+                <div style={{ flex: 1 }}>
+                  <p style={{ margin: 0, fontWeight: 600, fontSize: "0.9375rem" }}>
+                    {pendingApprovals.length} pending approval{pendingApprovals.length !== 1 ? "s" : ""}
+                  </p>
+                  <p style={{ margin: "0.125rem 0 0", fontSize: "0.8125rem", color: "var(--muted)" }}>
+                    Friday is waiting for your review before proceeding.
+                  </p>
+                </div>
+                <Link href="/" className="btn btn-secondary btn-sm">Review in Chat →</Link>
+              </div>
+            </div>
+          )}
+
+          {/* Stat cards */}
           <div className="stat-card-row">
             <div className="stat-card">
               <div className="stat-card-label">Members</div>
               <div className="stat-card-value">{members.length}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">OKRs</div>
+              <div className="stat-card-label">Active OKRs</div>
               <div className="stat-card-value">{objectives.length}</div>
             </div>
             <div className="stat-card">
@@ -177,30 +216,41 @@ export default function WorkspaceDetailPage() {
               </div>
             </div>
             <div className="stat-card">
-              <div className="stat-card-label">Visibility</div>
-              <div style={{ fontSize: "1rem", fontWeight: 600, marginTop: "0.25rem" }}>{workspace.visibility}</div>
+              <div className="stat-card-label">At Risk</div>
+              <div className="stat-card-value" style={{ color: "#b45309" }}>
+                {objectives.filter((o) => o.status === "at_risk" || o.status === "behind").length}
+              </div>
             </div>
           </div>
 
+          {/* Quick actions */}
           <div className="card">
-            <div className="card-header">Workspace Details</div>
-            <div className="card-body">
-              <table className="data-table">
-                <tbody>
-                  <tr><td style={{ width: "30%", color: "var(--text-muted)", fontWeight: 600 }}>Type</td><td><span className="badge badge-info">{workspace.type}</span></td></tr>
-                  <tr><td style={{ color: "var(--text-muted)", fontWeight: 600 }}>Owner</td><td>{workspace.owner}</td></tr>
-                  <tr><td style={{ color: "var(--text-muted)", fontWeight: 600 }}>Visibility</td><td>{workspace.visibility}</td></tr>
-                  <tr><td style={{ color: "var(--text-muted)", fontWeight: 600 }}>Created</td><td>{workspace.created_at.slice(0, 10)}</td></tr>
-                  {workspace.slug && <tr><td style={{ color: "var(--text-muted)", fontWeight: 600 }}>Slug</td><td style={{ fontFamily: "monospace", fontSize: "0.875rem" }}>{workspace.slug}</td></tr>}
-                </tbody>
-              </table>
+            <div className="card-header">Quick Actions</div>
+            <div className="card-body" style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+              <Link
+                href={`/?workspace_id=${id}`}
+                className="btn btn-primary"
+                style={{ display: "flex", alignItems: "center", gap: "0.375rem" }}
+              >
+                💬 Ask Friday about {workspace.name}
+              </Link>
+              <Link href={`/okrs?workspace_id=${id}`} className="btn btn-secondary">
+                🎯 View OKRs
+              </Link>
+              <Link href="/documents" className="btn btn-secondary">
+                📄 Documents
+              </Link>
+              <Link href="/analytics" className="btn btn-secondary">
+                📊 Analytics
+              </Link>
             </div>
           </div>
 
+          {/* OKR health */}
           {objectives.length > 0 && (
             <div className="card">
               <div className="card-header">
-                Recent OKRs
+                OKR Health
                 <Link href={`/okrs?workspace_id=${id}`} className="btn btn-ghost btn-sm">View all →</Link>
               </div>
               <table className="data-table">
@@ -218,6 +268,22 @@ export default function WorkspaceDetailPage() {
               </table>
             </div>
           )}
+
+          {/* Workspace details */}
+          <div className="card">
+            <div className="card-header">Details</div>
+            <div className="card-body">
+              <table className="data-table">
+                <tbody>
+                  <tr><td style={{ width: "30%", color: "var(--muted)", fontWeight: 600 }}>Type</td><td><span className="badge badge-info">{workspace.type}</span></td></tr>
+                  <tr><td style={{ color: "var(--muted)", fontWeight: 600 }}>Owner</td><td>{workspace.owner}</td></tr>
+                  <tr><td style={{ color: "var(--muted)", fontWeight: 600 }}>Visibility</td><td>{workspace.visibility}</td></tr>
+                  <tr><td style={{ color: "var(--muted)", fontWeight: 600 }}>Created</td><td>{workspace.created_at.slice(0, 10)}</td></tr>
+                  {workspace.slug && <tr><td style={{ color: "var(--muted)", fontWeight: 600 }}>Slug</td><td style={{ fontFamily: "monospace", fontSize: "0.875rem" }}>{workspace.slug}</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 
