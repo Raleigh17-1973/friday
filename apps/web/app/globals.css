@@ -300,7 +300,7 @@ textarea {
   gap: var(--space-1);
 }
 
-.composer-actions button,
+.composer-actions button:not(.segmented-btn),
 .jump-latest,
 .right-rail nav button {
   min-height: 48px;

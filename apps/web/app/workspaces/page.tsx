@@ -42,19 +42,27 @@ function NewWorkspaceModal({ onClose, onCreated }: { onClose: () => void; onCrea
     org_id: "default",
   });
   const [saving, setSaving] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.name.trim()) return;
     setSaving(true);
+    setSubmitError("");
     try {
-      await fetch(`${API}/workspaces`, {
+      const res = await fetch(`${API}/workspaces`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { detail?: string };
+        throw new Error(data.detail ?? `Server error (${res.status})`);
+      }
       onCreated();
       onClose();
+    } catch (err: unknown) {
+      setSubmitError(err instanceof Error ? err.message : "Failed to create workspace. Is the API running?");
     } finally {
       setSaving(false);
     }
@@ -112,9 +120,16 @@ function NewWorkspaceModal({ onClose, onCreated }: { onClose: () => void; onCrea
               <textarea className="form-textarea" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="What does this workspace contain?" />
             </div>
           </div>
-          <div className="card-footer" style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem" }}>
-            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? "Creating…" : "Create Workspace"}</button>
+          <div className="card-footer" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
+            {submitError ? (
+              <p style={{ margin: 0, fontSize: "0.8125rem", color: "var(--danger)", flex: 1 }}>
+                ⚠ {submitError}
+              </p>
+            ) : <span />}
+            <div style={{ display: "flex", gap: "0.5rem", flexShrink: 0 }}>
+              <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+              <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? "Creating…" : "Create Workspace"}</button>
+            </div>
           </div>
         </form>
       </div>
