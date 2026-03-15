@@ -253,12 +253,13 @@ class OKRService:
         )
         with sqlite3.connect(self._db_path) as conn:
             conn.execute(
-                """INSERT INTO objectives VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                """INSERT INTO objectives VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (obj.obj_id, obj.org_id, obj.workspace_id, obj.title, obj.description,
                  obj.owner, json.dumps(obj.collaborators), obj.parent_id, obj.level,
                  obj.period, obj.status, obj.confidence, obj.rationale, obj.progress,
                  json.dumps(obj.linked_initiatives), json.dumps(obj.linked_docs),
-                 obj.created_at, obj.updated_at)
+                 obj.created_at, obj.updated_at,
+                 None, "", None)  # grade, grade_retrospective, graded_at
             )
         return obj
 
