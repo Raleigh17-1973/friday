@@ -11,6 +11,54 @@ from packages.governance.policy import PolicyEngine
 from packages.process.repository import SQLiteProcessRepository
 
 
+def _build_mermaid(doc: ProcessDocument) -> str:
+    """Generate a Mermaid graph TD flowchart from a ProcessDocument's steps and decision_points."""
+    lines: list[str] = ["graph TD"]
+
+    # Build a lookup: step id → node id (s1, s2, ...)
+    step_node: dict[str, str] = {}
+    for i, step in enumerate(doc.steps):
+        node_id = f"s{i + 1}"
+        step_node[step.id] = node_id if step.id else node_id
+
+    trigger_text = (doc.trigger or "Process starts")[:50].replace('"', "'")
+    lines.append(f'    START(["{trigger_text}"]) --> s1')
+
+    for i, step in enumerate(doc.steps):
+        node_id = f"s{i + 1}"
+        step_label = (step.name or f"Step {i + 1}")[:40].replace('"', "'")
+        if step.owner:
+            owner_str = step.owner[:25].replace('"', "'")
+            label = f"{step_label}\\n{owner_str}"
+        else:
+            label = step_label
+        lines.append(f'    {node_id}["{label}"]')
+
+    # Decision points — wire them in as {condition?} gateways if they reference step ids
+    decision_nodes: list[str] = []
+    for j, dp in enumerate(doc.decision_points or []):
+        cond = (dp.get("condition") or f"Decision {j + 1}")[:40].replace('"', "'")
+        d_node = f"d{j + 1}"
+        lines.append(f'    {d_node}{{"{cond}?"}}}')
+        paths: dict[str, str] = dp.get("paths") or {}
+        for label, target in paths.items():
+            # target may be a step id or free text
+            target_node = step_node.get(target, f"s{target}" if target.isdigit() else None)
+            if target_node:
+                lines.append(f'    {d_node} -->|{label}| {target_node}')
+        decision_nodes.append(d_node)
+
+    # Simple sequential connections between steps
+    for i in range(len(doc.steps) - 1):
+        lines.append(f'    s{i + 1} --> s{i + 2}')
+
+    # Last step → END
+    last = f"s{len(doc.steps)}" if doc.steps else "START"
+    lines.append(f'    {last} --> END(["Process Complete"])')
+
+    return "\n".join(lines)
+
+
 def _bump_version(version: str, bump: str) -> str:
     """Increment a semver string. bump = 'major' | 'minor' | 'patch'."""
     parts = version.split(".")
@@ -141,6 +189,74 @@ class ProcessService:
 
     def delete(self, process_id: str) -> None:
         self._repo.soft_delete(process_id)
+
+    # ── diagram generation ────────────────────────────────────────────────────
+
+    def generate_mermaid(self, process_id: str) -> dict[str, str]:
+        """Return {"mermaid": "...", "source": "stored"|"generated"}.
+
+        Uses the stored mermaid_flowchart if present; otherwise auto-generates
+        one from the structured steps and decision_points.
+        """
+        doc = self._repo.get_latest(process_id)
+        if doc is None:
+            raise KeyError(f"Process {process_id!r} not found")
+        if doc.mermaid_flowchart:
+            return {"mermaid": doc.mermaid_flowchart, "source": "stored"}
+        if not doc.steps:
+            return {"mermaid": "", "source": "none"}
+        return {"mermaid": _build_mermaid(doc), "source": "generated"}
+
+    # ── execution tracking ────────────────────────────────────────────────────
+
+    def start_execution(self, process_id: str, actor: str = "user") -> dict[str, Any]:
+        """Create a new in-progress execution run for a process."""
+        doc = self._repo.get_latest(process_id)
+        if doc is None:
+            raise KeyError(f"Process {process_id!r} not found")
+        run_id = f"run_{uuid.uuid4().hex[:12]}"
+        run = self._repo.create_execution_run(run_id, process_id, actor)
+        run["total_steps"] = len(doc.steps)
+        if doc.steps:
+            run["current_step_name"] = doc.steps[0].name
+        return run
+
+    def advance_step(self, run_id: str) -> dict[str, Any]:
+        """Advance the execution run to the next step."""
+        run = self._repo.get_execution_run(run_id)
+        if run is None:
+            raise KeyError(f"Execution run {run_id!r} not found")
+        if run["status"] != "in_progress":
+            raise ValueError(f"Run {run_id!r} is not in_progress (status={run['status']})")
+        doc = self._repo.get_latest(run["process_id"])
+        next_idx = run["current_step_index"] + 1
+        if doc and next_idx >= len(doc.steps):
+            # Auto-complete when advancing past last step
+            return self.complete_execution(run_id)
+        updated = self._repo.update_execution_run(run_id, current_step_index=next_idx) or {}
+        if doc and next_idx < len(doc.steps):
+            updated["current_step_name"] = doc.steps[next_idx].name
+        updated["total_steps"] = len(doc.steps) if doc else 0
+        return updated
+
+    def complete_execution(self, run_id: str) -> dict[str, Any]:
+        """Mark an execution run as completed."""
+        run = self._repo.get_execution_run(run_id)
+        if run is None:
+            raise KeyError(f"Execution run {run_id!r} not found")
+        updated = self._repo.update_execution_run(
+            run_id, status="completed", completed_at=utc_now_iso()
+        ) or {}
+        return updated
+
+    def list_executions(self, process_id: str) -> list[dict[str, Any]]:
+        """List all execution runs for a process, newest first."""
+        doc = self._repo.get_latest(process_id)
+        total = len(doc.steps) if doc else 0
+        runs = self._repo.list_execution_runs(process_id)
+        for r in runs:
+            r["total_steps"] = total
+        return runs
 
     # ── helpers ───────────────────────────────────────────────────────────────
 

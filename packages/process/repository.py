@@ -192,3 +192,60 @@ class SQLiteProcessRepository(ProcessRepository):
             (utc_now_iso(), process_id),
         )
         self._db.commit()
+
+    # ── execution runs ────────────────────────────────────────────────────────
+
+    def _ensure_execution_table(self) -> None:
+        try:
+            self._db.execute("""
+                CREATE TABLE IF NOT EXISTS process_execution_runs (
+                    run_id              TEXT PRIMARY KEY,
+                    process_id          TEXT NOT NULL,
+                    started_at          TEXT NOT NULL,
+                    completed_at        TEXT,
+                    status              TEXT NOT NULL DEFAULT 'in_progress',
+                    current_step_index  INTEGER NOT NULL DEFAULT 0,
+                    actor               TEXT NOT NULL DEFAULT 'user',
+                    FOREIGN KEY (process_id) REFERENCES processes(process_id)
+                )
+            """)
+            self._db.commit()
+        except Exception:
+            pass
+
+    def create_execution_run(self, run_id: str, process_id: str, actor: str) -> dict[str, Any]:
+        self._ensure_execution_table()
+        now = utc_now_iso()
+        self._db.execute(
+            "INSERT INTO process_execution_runs (run_id, process_id, started_at, status, current_step_index, actor) "
+            "VALUES (?, ?, ?, 'in_progress', 0, ?)",
+            (run_id, process_id, now, actor),
+        )
+        self._db.commit()
+        return {"run_id": run_id, "process_id": process_id, "started_at": now,
+                "status": "in_progress", "current_step_index": 0, "actor": actor}
+
+    def get_execution_run(self, run_id: str) -> dict[str, Any] | None:
+        self._ensure_execution_table()
+        row = self._db.execute(
+            "SELECT * FROM process_execution_runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def update_execution_run(self, run_id: str, **kwargs: Any) -> dict[str, Any] | None:
+        self._ensure_execution_table()
+        if not kwargs:
+            return self.get_execution_run(run_id)
+        sets = ", ".join(f"{k} = ?" for k in kwargs)
+        vals = list(kwargs.values()) + [run_id]
+        self._db.execute(f"UPDATE process_execution_runs SET {sets} WHERE run_id = ?", vals)
+        self._db.commit()
+        return self.get_execution_run(run_id)
+
+    def list_execution_runs(self, process_id: str) -> list[dict[str, Any]]:
+        self._ensure_execution_table()
+        rows = self._db.execute(
+            "SELECT * FROM process_execution_runs WHERE process_id = ? ORDER BY started_at DESC",
+            (process_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]

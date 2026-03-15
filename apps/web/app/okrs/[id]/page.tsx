@@ -538,6 +538,12 @@ export default function OKRDetailPage() {
   const [showAddCheckIn, setShowAddCheckIn] = useState(false);
   const [showAllCheckIns, setShowAllCheckIns] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [showGradeForm, setShowGradeForm] = useState(false);
+  const [gradeValue, setGradeValue] = useState(0.7);
+  const [gradeRetro, setGradeRetro] = useState("");
+  const [gradeCarryForward, setGradeCarryForward] = useState(false);
+  const [grading, setGrading] = useState(false);
+  const [gradeResult, setGradeResult] = useState<{ grade_label?: string; carry_forward_obj_id?: string } | null>(null);
 
   // Fetch available KPIs for the link-to-KPI select
   useEffect(() => {
@@ -578,6 +584,32 @@ export default function OKRDetailPage() {
   }
 
   useEffect(() => { load(); }, [id]);
+
+  async function handleGrade(e: React.FormEvent) {
+    e.preventDefault();
+    if (!obj || grading) return;
+    setGrading(true);
+    try {
+      const res = await fetch(`${API}/okrs/${obj.obj_id}/grade`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          grade: gradeValue,
+          retrospective: gradeRetro,
+          carry_forward: gradeCarryForward,
+        }),
+      });
+      if (!res.ok) throw new Error("Grade failed");
+      const data = await res.json() as { grade_label?: string; carry_forward_obj_id?: string };
+      setGradeResult(data);
+      setShowGradeForm(false);
+      load();
+    } catch {
+      // swallow
+    } finally {
+      setGrading(false);
+    }
+  }
 
   async function handleExport(format: "docx" | "pptx" = "docx") {
     if (!obj || exporting) return;
@@ -928,6 +960,75 @@ export default function OKRDetailPage() {
             )}
           </div>
         </div>
+        {/* Grade This Objective */}
+        {(obj.status === "completed" || obj.status === "graded" || obj.progress >= 1) && (
+          <div className="card">
+            <div className="card-header">
+              Grade This Objective
+              {obj.status !== "graded" && (
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setShowGradeForm((v) => !v)}
+                >
+                  {showGradeForm ? "Cancel" : "Grade"}
+                </button>
+              )}
+            </div>
+            <div className="card-body">
+              {gradeResult && (
+                <div style={{ padding: "0.75rem", background: "var(--surface-2)", borderRadius: "var(--radius-s)", marginBottom: "1rem" }}>
+                  ✅ Graded: <strong>{gradeResult.grade_label}</strong>
+                  {gradeResult.carry_forward_obj_id && (
+                    <span> · <a href={`/okrs/${gradeResult.carry_forward_obj_id}`} style={{ color: "var(--accent)" }}>View carried-forward objective →</a></span>
+                  )}
+                </div>
+              )}
+              {showGradeForm && (
+                <form onSubmit={handleGrade} style={{ display: "flex", flexDirection: "column", gap: "0.75rem", maxWidth: 520 }}>
+                  <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "0.82rem", fontWeight: 600 }}>
+                    Grade (0.0 – 1.0)
+                    <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+                      <input
+                        type="range" min={0} max={1} step={0.05}
+                        value={gradeValue}
+                        onChange={(e) => setGradeValue(Number(e.target.value))}
+                        style={{ flex: 1 }}
+                      />
+                      <span style={{ fontWeight: 700, minWidth: 40 }}>{Math.round(gradeValue * 100)}%</span>
+                    </div>
+                    <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 400 }}>
+                      {gradeValue < 0.1 ? "Did Not Start" : gradeValue < 0.45 ? "Partial" : gradeValue < 0.75 ? "Good Progress" : "Fully Achieved"}
+                    </span>
+                  </label>
+                  <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "0.82rem", fontWeight: 600 }}>
+                    Retrospective
+                    <textarea
+                      className="form-input"
+                      rows={3}
+                      placeholder="What went well? What would you do differently?"
+                      value={gradeRetro}
+                      onChange={(e) => setGradeRetro(e.target.value)}
+                    />
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.82rem", fontWeight: 600, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={gradeCarryForward}
+                      onChange={(e) => setGradeCarryForward(e.target.checked)}
+                    />
+                    Carry forward into next period
+                  </label>
+                  <button className="btn btn-primary" type="submit" disabled={grading} style={{ alignSelf: "flex-start" }}>
+                    {grading ? "Saving…" : "Submit Grade"}
+                  </button>
+                </form>
+              )}
+              {obj.status === "graded" && !showGradeForm && !gradeResult && (
+                <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>This objective has been graded.</p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </PageShell>
   );

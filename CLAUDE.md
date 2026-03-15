@@ -8,7 +8,7 @@ Before scanning the repository or reading individual files, consult these docume
 
 1. **This file** (`CLAUDE.md`) — product identity, architecture rules, coding conventions, command reference
 2. **`docs/repo-map.md`** — directory map, key file locations, high-risk zones, last-updated timestamp
-3. **`docs/agent-registry-summary.md`** — all 23 agents, their purposes, write access, and prompt paths
+3. **`docs/agent-registry-summary.md`** — all 24 agents, their purposes, write access, and prompt paths
 4. **`docs/testing-playbook.md`** — test commands, regression areas, eval harness
 
 After reading those three files, you will know where to look for any specific task. **Do not scan the full repository from scratch.** Read only the files directly relevant to the current task.
@@ -19,9 +19,9 @@ After reading those three files, you will know where to look for any specific ta
 
 ## Project Identity
 
-**Friday** is a manager-led multi-agent business operating system built on Anthropic Claude. It helps companies run strategy, operations, and knowledge work through 23 specialist AI agents coordinated by a central orchestrator. The product ships as a FastAPI backend + Next.js 14 frontend with SQLite persistence (Postgres-ready).
+**Friday** is a manager-led multi-agent business operating system built on Anthropic Claude. It helps companies run strategy, operations, and knowledge work through 24 specialist AI agents coordinated by a central orchestrator. The product ships as a FastAPI backend + Next.js 14 frontend with SQLite persistence (Postgres-ready).
 
-**Repo:** `Raleigh17-1973/friday` · **Version:** 0.2.0 · **Python ≥ 3.9**
+**Repo:** `Raleigh17-1973/friday` · **Version:** 0.3.0 · **Python ≥ 3.9**
 
 ---
 
@@ -154,7 +154,9 @@ python scripts/run_temporal_worker.py
 - `_inject_recalled_context()` is called before planning on every request
 - Both SSE streaming and fallback non-streaming paths must surface `write_actions`
 - `ConversationService.add_message()` auto-creates threads — explicit `create_thread()` is optional
-- `TaskService`, `NotificationService`, `ConversationService`, `ActivityService` are all SQLite-backed singletons in `FridayService`
+- `TaskService`, `NotificationService`, `ConversationService`, `ActivityService`, `SchedulerService` are all SQLite-backed singletons in `FridayService`
+- `SchedulerService` uses APScheduler if installed; falls back to `_NoOpScheduler` so startup never blocks on APScheduler absence
+- `SlackClient` uses `slack_sdk` if installed; falls back gracefully to stub responses when SDK or token is absent
 - `ActivityService` auto-logs task create/update and OKR check-in events; never raises — fire-and-forget
 - The `data/` directory is never committed to git (SQLite files are gitignored)
 

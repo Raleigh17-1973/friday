@@ -1,0 +1,15 @@
+{
+  "agent_id": "slack_notifier",
+  "name": "Slack Notifier",
+  "purpose": "Sends Slack notifications for approvals, task assignments, OKR updates, and weekly digests. Posts to channels or sends direct messages when Friday takes actions that require human awareness.",
+  "domain": "integrations",
+  "status": "active",
+  "tools_allowed": ["slack.post", "slack.dm", "notifications.create"],
+  "risk_level": "low",
+  "requires_approval": false,
+  "governance": {
+    "audit_all": true,
+    "max_tool_calls": 5
+  },
+  "routing_keywords": ["slack", "notify", "post to channel", "send message", "dm", "alert team", "notify the team", "post an update"]
+}

@@ -21,6 +21,9 @@ class ProcessStep:
     outputs: list[str] = field(default_factory=list)
     tools: list[str] = field(default_factory=list)
     sla: str = ""
+    description: str = ""
+    duration_estimate: str = ""
+    output_artifact: str = ""
 
 
 @dataclass

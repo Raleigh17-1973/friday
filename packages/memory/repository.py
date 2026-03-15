@@ -27,6 +27,21 @@ class MemoryRepository:
                   memory_value text not null,
                   primary key(org_id, memory_key)
                 );
+                """
+            )
+            # Additive migrations — never break existing tables
+            for migration in [
+                "ALTER TABLE semantic_memories ADD COLUMN workspace_id TEXT",
+                "ALTER TABLE semantic_memories ADD COLUMN created_at TEXT DEFAULT (datetime('now'))",
+                "ALTER TABLE semantic_memories ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))",
+            ]:
+                try:
+                    conn.execute(migration)
+                    conn.commit()
+                except Exception:
+                    pass
+            conn.executescript(
+                """
 
                 create table if not exists episodic_memories (
                   id integer primary key autoincrement,
@@ -51,26 +66,96 @@ class MemoryRepository:
                 """
             )
 
-    def upsert_semantic(self, org_id: str, facts: dict[str, Any]) -> None:
+    def upsert_semantic(
+        self,
+        org_id: str,
+        facts: dict[str, Any],
+        workspace_id: str | None = None,
+    ) -> None:
+        now = __import__("datetime").datetime.utcnow().isoformat()
         with self._connect() as conn:
             for key, value in facts.items():
                 conn.execute(
                     """
-                    insert into semantic_memories(org_id, memory_key, memory_value)
-                    values (?, ?, ?)
+                    insert into semantic_memories(org_id, memory_key, memory_value, workspace_id, created_at, updated_at)
+                    values (?, ?, ?, ?, ?, ?)
                     on conflict(org_id, memory_key)
-                    do update set memory_value = excluded.memory_value
+                    do update set memory_value = excluded.memory_value,
+                                  workspace_id = coalesce(excluded.workspace_id, semantic_memories.workspace_id),
+                                  updated_at = excluded.updated_at
                     """,
-                    (org_id, key, json.dumps(value)),
+                    (org_id, key, json.dumps(value), workspace_id, now, now),
                 )
 
-    def get_semantic(self, org_id: str) -> dict[str, Any]:
+    def get_semantic(self, org_id: str, workspace_id: str | None = None) -> dict[str, Any]:
+        with self._connect() as conn:
+            if workspace_id:
+                rows = conn.execute(
+                    "select memory_key, memory_value from semantic_memories "
+                    "where org_id = ? and (workspace_id = ? or workspace_id is null)",
+                    (org_id, workspace_id),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "select memory_key, memory_value from semantic_memories where org_id = ?",
+                    (org_id,),
+                ).fetchall()
+        return {row["memory_key"]: json.loads(row["memory_value"]) for row in rows}
+
+    def list_semantic(
+        self,
+        org_id: str,
+        workspace_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Return semantic memory entries with metadata (key, value, workspace_id, created_at)."""
+        with self._connect() as conn:
+            if workspace_id:
+                rows = conn.execute(
+                    "select memory_key, memory_value, workspace_id, created_at, updated_at "
+                    "from semantic_memories where org_id = ? and (workspace_id = ? or workspace_id is null) "
+                    "order by updated_at desc limit ? offset ?",
+                    (org_id, workspace_id, limit, offset),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "select memory_key, memory_value, workspace_id, created_at, updated_at "
+                    "from semantic_memories where org_id = ? "
+                    "order by updated_at desc limit ? offset ?",
+                    (org_id, limit, offset),
+                ).fetchall()
+        return [
+            {
+                "key": r["memory_key"],
+                "value": json.loads(r["memory_value"]),
+                "workspace_id": r["workspace_id"],
+                "created_at": r["created_at"],
+                "updated_at": r["updated_at"],
+            }
+            for r in rows
+        ]
+
+    def list_pending_candidates(self, org_id: str) -> list[dict[str, Any]]:
+        """Return unreviewed memory candidates awaiting approval."""
         with self._connect() as conn:
             rows = conn.execute(
-                "select memory_key, memory_value from semantic_memories where org_id = ?",
+                "select candidate_id, run_id, org_id, candidate_type, content, risk_level, created_at "
+                "from memory_candidates where org_id = ? and promoted = 0 "
+                "order by created_at desc limit 50",
                 (org_id,),
             ).fetchall()
-        return {row["memory_key"]: json.loads(row["memory_value"]) for row in rows}
+        return [
+            {
+                "candidate_id": r["candidate_id"],
+                "run_id": r["run_id"],
+                "candidate_type": r["candidate_type"],
+                "content": json.loads(r["content"]) if isinstance(r["content"], str) else r["content"],
+                "risk_level": r["risk_level"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
 
     def add_episode(self, org_id: str, run_id: str, event: dict[str, Any]) -> None:
         with self._connect() as conn:

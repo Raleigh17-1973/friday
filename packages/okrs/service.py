@@ -94,6 +94,38 @@ class CheckIn:
     next_steps: str = ""
 
 
+def _grade_label(grade: float) -> str:
+    if grade < 0.1:
+        return "Did Not Start"
+    if grade < 0.45:
+        return "Partial"
+    if grade < 0.75:
+        return "Good Progress"
+    return "Fully Achieved"
+
+
+def _next_period(period: str) -> str:
+    """Infer the next period label from the current one.
+
+    Handles common formats: "Q1-2025", "Q4-2025", "H1-2025", "FY2025".
+    Falls back to appending " (next)".
+    """
+    import re
+    m = re.match(r"Q(\d)-(\d{4})", period)
+    if m:
+        q, year = int(m.group(1)), int(m.group(2))
+        if q == 4:
+            return f"Q1-{year + 1}"
+        return f"Q{q + 1}-{year}"
+    m = re.match(r"H(\d)-(\d{4})", period)
+    if m:
+        h, year = int(m.group(1)), int(m.group(2))
+        if h == 2:
+            return f"H1-{year + 1}"
+        return f"H2-{year}"
+    return f"{period} (next)"
+
+
 class OKRService:
     """Full OKR lifecycle: objectives, key results, initiatives, check-ins."""
 
@@ -183,6 +215,15 @@ class OKRService:
                 conn.execute("ALTER TABLE key_results ADD COLUMN kpi_id TEXT")
             except Exception:
                 pass  # Column already exists
+            for col_def in (
+                "grade REAL",
+                "grade_retrospective TEXT NOT NULL DEFAULT ''",
+                "graded_at TEXT",
+            ):
+                try:
+                    conn.execute(f"ALTER TABLE objectives ADD COLUMN {col_def}")
+                except Exception:
+                    pass  # Column already exists
 
     # ---- Objectives ----
     def create_objective(
@@ -630,3 +671,84 @@ class OKRService:
             for child in self.get_children(root_id, org_id)
         ]
         return node
+
+    # ── OKR grading ───────────────────────────────────────────────────────────
+
+    def grade_objective(
+        self,
+        obj_id: str,
+        grade: float,
+        retrospective: str = "",
+        carry_forward: bool = False,
+        next_period: str | None = None,
+    ) -> dict[str, Any]:
+        """Grade a completed objective on a 0.0–1.0 scale.
+
+        Args:
+            obj_id: The objective to grade.
+            grade: 0.0 = Did Not Start, 0.3 = Partial, 0.7 = Good Progress, 1.0 = Fully Achieved.
+            retrospective: Qualitative reflection on the objective.
+            carry_forward: If True, clone the objective into the next period with 0 progress.
+            next_period: The period label for the carried-forward clone (e.g. "Q3-2026").
+
+        Returns:
+            Dict with {obj_id, grade, retrospective, graded_at, carry_forward_obj_id?}.
+        """
+        obj = self.get_objective(obj_id)
+        if obj is None:
+            raise KeyError(f"Objective {obj_id!r} not found")
+
+        grade = max(0.0, min(1.0, float(grade)))
+        now = datetime.utcnow().isoformat() + "Z"
+
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute(
+                "UPDATE objectives SET grade = ?, grade_retrospective = ?, graded_at = ?, "
+                "status = 'graded', updated_at = ? WHERE obj_id = ?",
+                (grade, retrospective, now, now, obj_id),
+            )
+
+        result: dict[str, Any] = {
+            "obj_id": obj_id,
+            "title": obj.title,
+            "grade": grade,
+            "grade_label": _grade_label(grade),
+            "retrospective": retrospective,
+            "graded_at": now,
+        }
+
+        if carry_forward:
+            period = next_period or _next_period(obj.period)
+            new_obj = self.create_objective(
+                title=obj.title,
+                period=period,
+                level=obj.level,
+                org_id=obj.org_id,
+                workspace_id=obj.workspace_id,
+                owner=obj.owner,
+                description=f"Carried forward from {obj.period}. {obj.description}".strip(),
+                parent_id=obj.parent_id,
+            )
+            result["carry_forward_obj_id"] = new_obj.obj_id
+            result["carry_forward_period"] = period
+
+        return result
+
+    def list_overdue_checkins(self, org_id: str = "org-1", days: int = 7) -> list[dict[str, Any]]:
+        """Return active objectives whose latest check-in is older than `days` days (or has none)."""
+        from dataclasses import asdict
+        threshold = (datetime.utcnow() - __import__("datetime").timedelta(days=days)).isoformat() + "Z"
+        with sqlite3.connect(self._db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT o.obj_id FROM objectives o
+                WHERE o.org_id = ? AND o.status = 'active'
+                AND (
+                    NOT EXISTS (SELECT 1 FROM checkins c WHERE c.objective_id = o.obj_id)
+                    OR (SELECT MAX(c.created_at) FROM checkins c WHERE c.objective_id = o.obj_id) < ?
+                )
+                """,
+                (org_id, threshold),
+            ).fetchall()
+        return [self.get_objective(r["obj_id"]) for r in rows if self.get_objective(r["obj_id"]) is not None]

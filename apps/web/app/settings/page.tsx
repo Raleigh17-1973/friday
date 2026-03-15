@@ -89,18 +89,26 @@ function saveUserRole(role: string) {
   window.dispatchEvent(new Event("friday_role_changed"));
 }
 
+type SlackStatus = { connected: boolean; team?: string; bot?: string; error?: string };
+
 // ── Integration Card ───────────────────────────────────────────────────────
 function IntegrationCard({
   integration,
   knownInfo,
   onConnect,
+  slackStatus,
+  onSlackDisconnect,
 }: {
   integration?: Integration;
   knownInfo: typeof KNOWN_INTEGRATIONS[number];
   onConnect: (name: string) => void;
+  slackStatus?: SlackStatus | null;
+  onSlackDisconnect?: () => void;
 }) {
-  const connected = integration?.connected ?? false;
-  const stub = integration?.stub ?? false;
+  const isSlack = knownInfo.name === "Slack";
+  const slackConnected = isSlack && slackStatus?.connected;
+  const connected = isSlack ? slackConnected : (integration?.connected ?? false);
+  const stub = !isSlack && (integration?.stub ?? false);
 
   return (
     <div className="settings-integration-card" style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
@@ -119,17 +127,42 @@ function IntegrationCard({
         )}
       </div>
       <p style={{ fontSize: "0.8125rem", color: "var(--text-muted)", margin: 0 }}>{knownInfo.description}</p>
-      {integration?.message && (
+      {isSlack && slackConnected && slackStatus?.team && (
+        <p style={{ fontSize: "0.78rem", color: "var(--success, #16a34a)", margin: 0 }}>
+          Connected to <strong>{slackStatus.team}</strong>{slackStatus.bot ? ` · Bot: ${slackStatus.bot}` : ""}
+        </p>
+      )}
+      {!isSlack && integration?.message && (
         <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: 0, fontStyle: "italic" }}>{integration.message}</p>
       )}
-      {!connected && (
-        <button
-          className="btn btn-secondary btn-sm"
-          style={{ alignSelf: "flex-start" }}
-          onClick={() => onConnect(knownInfo.name)}
-        >
-          Configure →
-        </button>
+      {isSlack ? (
+        slackConnected ? (
+          <button
+            className="btn btn-ghost btn-sm"
+            style={{ alignSelf: "flex-start", color: "#dc2626", fontSize: "0.78rem" }}
+            onClick={onSlackDisconnect}
+          >
+            Disconnect
+          </button>
+        ) : (
+          <a
+            href={`${BACKEND}/integrations/slack/connect`}
+            className="btn btn-secondary btn-sm"
+            style={{ alignSelf: "flex-start", textDecoration: "none" }}
+          >
+            Connect with Slack →
+          </a>
+        )
+      ) : (
+        !connected && (
+          <button
+            className="btn btn-secondary btn-sm"
+            style={{ alignSelf: "flex-start" }}
+            onClick={() => onConnect(knownInfo.name)}
+          >
+            Configure →
+          </button>
+        )
       )}
     </div>
   );
@@ -189,6 +222,28 @@ export default function SettingsPage() {
   const [showAddMember, setShowAddMember] = useState(false);
   const [newMember, setNewMember] = useState({ name: "", email: "", role: "member" });
   const [connectModal, setConnectModal] = useState<string | null>(null);
+  const [slackStatus, setSlackStatus] = useState<SlackStatus | null>(null);
+  const [oauthBanner, setOauthBanner] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  function loadSlackStatus() {
+    fetch(`${BACKEND}/integrations/slack/status`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => { if (data) setSlackStatus(data as SlackStatus); })
+      .catch(() => {});
+  }
+
+  async function handleSlackDisconnect() {
+    try {
+      const r = await fetch(`${BACKEND}/integrations/slack/disconnect`, { method: "DELETE" });
+      if (r.ok) {
+        setSlackStatus({ connected: false });
+        setOauthBanner({ type: "success", message: "Slack disconnected successfully." });
+      }
+    } catch {
+      setOauthBanner({ type: "error", message: "Failed to disconnect Slack. Please try again." });
+    }
+    setTimeout(() => setOauthBanner(null), 4000);
+  }
 
   useEffect(() => {
     setOkrConfigState(loadOKRConfig());
@@ -200,15 +255,35 @@ export default function SettingsPage() {
       if (raw) setMembers(JSON.parse(raw));
     } catch { /* empty */ }
 
+    // Check for OAuth callback result in URL params
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const oauthResult = params.get("slack_oauth");
+      const oauthError = params.get("error");
+      if (oauthResult === "success") {
+        setOauthBanner({ type: "success", message: "Slack connected successfully!" });
+        setActiveTab("integrations");
+        // Clean URL without reload
+        window.history.replaceState({}, "", window.location.pathname);
+        setTimeout(() => setOauthBanner(null), 5000);
+      } else if (oauthError) {
+        setOauthBanner({ type: "error", message: `Slack connection failed: ${oauthError}` });
+        window.history.replaceState({}, "", window.location.pathname);
+        setTimeout(() => setOauthBanner(null), 6000);
+      }
+    }
+
     Promise.all([
       fetch(`${BACKEND}/integrations/status`).then((r) => r.ok ? r.json() : { integrations: [] }),
       fetch(`${BACKEND}/credentials`).then((r) => r.ok ? r.json() : { credentials: [] }),
+      fetch(`${BACKEND}/integrations/slack/status`).then((r) => r.ok ? r.json() : null),
     ])
-      .then(([intData, credData]: [unknown, unknown]) => {
+      .then(([intData, credData, slackData]: [unknown, unknown, unknown]) => {
         const intObj = intData as { integrations?: Integration[] };
         const credObj = credData as { credentials?: Credential[] };
         setIntegrations(Array.isArray(intObj?.integrations) ? intObj.integrations : []);
         setCredentials(Array.isArray(credObj?.credentials) ? credObj.credentials : []);
+        if (slackData) setSlackStatus(slackData as SlackStatus);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -276,6 +351,24 @@ export default function SettingsPage() {
     >
       <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
 
+        {/* ── OAuth result banner ────────────────────────────────────────── */}
+        {oauthBanner && (
+          <div style={{
+            padding: "0.75rem 1rem",
+            borderRadius: "0.5rem",
+            fontSize: "0.875rem",
+            fontWeight: 500,
+            background: oauthBanner.type === "success" ? "var(--success-subtle, #dcfce7)" : "var(--danger-subtle, #fee2e2)",
+            color: oauthBanner.type === "success" ? "var(--success, #16a34a)" : "var(--danger, #dc2626)",
+            border: `1px solid ${oauthBanner.type === "success" ? "var(--success, #16a34a)" : "var(--danger, #dc2626)"}`,
+            display: "flex",
+            alignItems: "center",
+            gap: "0.5rem",
+          }}>
+            {oauthBanner.type === "success" ? "✓" : "✕"} {oauthBanner.message}
+          </div>
+        )}
+
         {/* ── Integrations Tab ───────────────────────────────────────────── */}
         {activeTab === "integrations" && (
           <>
@@ -291,6 +384,8 @@ export default function SettingsPage() {
                         integration={live}
                         knownInfo={ki}
                         onConnect={(name) => setConnectModal(name)}
+                        slackStatus={ki.name === "Slack" ? slackStatus : undefined}
+                        onSlackDisconnect={ki.name === "Slack" ? handleSlackDisconnect : undefined}
                       />
                     );
                   })}

@@ -53,7 +53,7 @@ class ToolExecutor:
         if tool_name.startswith("calendar."):
             return self._calendar_stub(tool_name, args)
         if tool_name.startswith("slack."):
-            return self._slack_stub(tool_name, args)
+            return self._slack_tool(tool_name, args)
 
         # Phase 4: Analytics
         if tool_name.startswith("analytics."):
@@ -533,6 +533,42 @@ class ToolExecutor:
             "stub": True, "message": "Slack integration not yet connected. Configure Slack in Settings.",
             "args_received": args,
         })
+
+    def _slack_tool(self, tool_name: str, args: dict[str, Any]) -> ToolResult:
+        """Real Slack tool dispatch — uses SlackClient with credential-resolved token."""
+        from packages.integrations.slack.client import SlackClient
+        # Resolve token from credential service if available
+        token: str | None = None
+        try:
+            if hasattr(self, "_service") and self._service is not None:
+                cred_svc = getattr(self._service, "credentials", None)
+                if cred_svc and cred_svc.has_credential("slack", "org-1"):
+                    cred = cred_svc.get_credential("slack", "org-1")
+                    token = cred.token if cred else None
+        except Exception:
+            pass
+        client = SlackClient(token=token)
+        try:
+            if tool_name == "slack.post":
+                result = client.post_message(
+                    channel=str(args.get("channel", "#general")),
+                    text=str(args.get("text", "")),
+                    thread_ts=args.get("thread_ts"),
+                )
+                return ToolResult(tool_name=tool_name, ok=result.get("ok", False), output=result)
+            if tool_name == "slack.dm":
+                result = client.send_dm(
+                    user_id=str(args.get("user_id", "")),
+                    text=str(args.get("text", "")),
+                )
+                return ToolResult(tool_name=tool_name, ok=result.get("ok", False), output=result)
+            if tool_name == "slack.channels":
+                return ToolResult(tool_name=tool_name, ok=True, output={"channels": client.get_channels()})
+            if tool_name == "slack.users":
+                return ToolResult(tool_name=tool_name, ok=True, output={"users": client.get_users()})
+        except Exception as exc:
+            return ToolResult(tool_name=tool_name, ok=False, error=str(exc))
+        return self._slack_stub(tool_name, args)
 
     def _integration_stub(self, tool_name: str, args: dict[str, Any], service: str) -> ToolResult:
         return ToolResult(tool_name=tool_name, ok=True, output={

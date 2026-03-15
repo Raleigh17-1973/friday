@@ -61,12 +61,15 @@ Wrap in a JSON code fence. This is the machine-readable normalized process objec
   "steps": [
     {
       "id": "s1",
-      "name": "...",
-      "owner": "...",
-      "inputs": ["..."],
-      "outputs": ["..."],
-      "tools": ["..."],
-      "sla": "..."
+      "name": "Short action title",
+      "description": "Clear description of what happens and why",
+      "owner": "Role or team name",
+      "inputs": ["what is needed to start this step"],
+      "outputs": ["what is produced by this step"],
+      "output_artifact": "primary document or object created (e.g. 'Signed contract', 'Jira ticket')",
+      "tools": ["Tool or system used"],
+      "sla": "time target (e.g. '< 4 hours', '1 business day')",
+      "duration_estimate": "typical duration (e.g. '30 minutes', '2–3 days')"
     }
   ],
   "decision_points": [
@@ -232,8 +235,18 @@ Structure:
   "org_id": "org-1",
   "trigger": "...",
   "steps": [
-    {"id": "step_1", "name": "Step title", "owner": "Role name", "sla": ""},
-    ...
+    {
+      "id": "step_1",
+      "name": "Step title",
+      "description": "What happens in this step",
+      "owner": "Role name",
+      "inputs": [],
+      "outputs": [],
+      "output_artifact": "primary output document or object",
+      "tools": [],
+      "sla": "",
+      "duration_estimate": ""
+    }
   ],
   "roles": ["Role A", "Role B"],
   "tools": ["Tool 1"],

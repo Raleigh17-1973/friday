@@ -460,26 +460,52 @@ def bulk_decide(payload: BulkDecidePayload) -> dict:
 
 
 @app.get("/memories")
-def list_memories(org_id: str = "org-1") -> dict:
-    """Return all stored semantic memories for an org as a flat key/value list."""
-    semantic: dict = service.memory._semantic_by_org.get(org_id, {})
-    memories = [{"key": k, "value": str(v)} for k, v in semantic.items()]
-    return {"org_id": org_id, "memories": memories, "count": len(memories)}
+def list_memories(
+    org_id: str = "org-1",
+    workspace_id: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict:
+    """Return semantic memories with metadata. Supports workspace_id filtering and pagination."""
+    entries = service.memory.list_semantic(
+        org_id, workspace_id=workspace_id, limit=limit, offset=offset
+    )
+    # Normalize value to string for display
+    for e in entries:
+        if not isinstance(e.get("value"), str):
+            e["value"] = str(e["value"])
+    return {"org_id": org_id, "memories": entries, "count": len(entries)}
 
 
 @app.delete("/memories/{org_id}/{key}")
 def delete_memory(org_id: str, key: str) -> dict:
-    """Remove a single semantic memory entry."""
+    """Remove a single semantic memory entry from both in-memory and durable store."""
+    # Remove from in-memory store
     store = service.memory._semantic_by_org.get(org_id, {})
-    if key not in store:
-        raise HTTPException(status_code=404, detail="memory key not found")
-    del service.memory._semantic_by_org[org_id][key]
+    store.pop(key, None)
+    # Remove from SQLite if repository is present
+    if service.memory._repository is not None:
+        try:
+            with service.memory._repository._connect() as conn:
+                conn.execute(
+                    "DELETE FROM semantic_memories WHERE org_id = ? AND memory_key = ?",
+                    (org_id, key),
+                )
+        except Exception:
+            pass
     return {"deleted": key}
 
 
 @app.get("/memories/search")
 def search_memories(org_id: str, q: str) -> dict:
     return service.memory.search(org_id=org_id, query=q)
+
+
+@app.get("/memories/candidates")
+def list_memory_candidates(org_id: str = "org-1") -> dict:
+    """Return unreviewed memory candidates pending approval."""
+    candidates = service.memory.list_candidates(org_id)
+    return {"org_id": org_id, "candidates": candidates, "count": len(candidates)}
 
 
 @app.post("/memories/candidates/promote")
@@ -1041,6 +1067,58 @@ def process_completeness(process_id: str) -> dict:
     return service.processes.completeness_breakdown(doc)
 
 
+@app.get("/processes/{process_id}/diagram")
+def process_diagram(process_id: str) -> dict:
+    """Return a Mermaid flowchart for this process.
+
+    Uses the stored mermaid_flowchart if it exists; otherwise auto-generates
+    one from the structured steps and decision_points.
+    Returns: {mermaid: str, source: "stored"|"generated"|"none"}
+    """
+    try:
+        return service.processes.generate_mermaid(process_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Process not found")
+
+
+@app.post("/processes/{process_id}/runs", status_code=201)
+def start_process_execution(process_id: str, actor: str = "user") -> dict:
+    """Start a new execution run for a process. Returns the run record."""
+    try:
+        return service.processes.start_execution(process_id, actor=actor)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Process not found")
+
+
+@app.get("/processes/{process_id}/runs")
+def list_process_executions(process_id: str) -> list[dict]:
+    """List all execution runs for a process, newest first."""
+    doc = service.processes.get(process_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Process not found")
+    return service.processes.list_executions(process_id)
+
+
+@app.post("/processes/runs/{run_id}/advance")
+def advance_process_step(run_id: str) -> dict:
+    """Advance an in-progress execution run to the next step."""
+    try:
+        return service.processes.advance_step(run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Execution run not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/processes/runs/{run_id}/complete")
+def complete_process_execution(run_id: str) -> dict:
+    """Mark an execution run as completed."""
+    try:
+        return service.processes.complete_execution(run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Execution run not found")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── File storage endpoints ────────────────────────────────────────────────────
@@ -1317,6 +1395,158 @@ def integration_status(org_id: str = "org-1") -> dict:
     """Check which integrations are connected."""
     providers = ["google", "slack", "jira", "linear", "confluence", "notion", "salesforce", "hubspot", "gmail", "outlook"]
     return {p: service.credentials.has_credential(p, org_id) for p in providers}
+
+
+# ── Slack OAuth + webhook endpoints ──────────────────────────────────────────
+
+@app.get("/integrations/slack/status")
+def slack_status(org_id: str = "org-1") -> dict:
+    """Return Slack connection status for the org, including team/bot metadata."""
+    connected = service.credentials.has_credential("slack", org_id)
+    if not connected:
+        return {"connected": False}
+    try:
+        cred = service.credentials.get_credential("slack", org_id)
+        meta = (cred.metadata or {}) if cred else {}
+        return {"connected": True, "team": meta.get("team", ""), "bot": meta.get("bot", "")}
+    except Exception:
+        return {"connected": True}
+
+
+@app.get("/integrations/slack/connect")
+def slack_oauth_connect(
+    org_id: str = "org-1",
+    redirect_uri: str = "http://localhost:8000/integrations/slack/callback",
+    frontend_url: str = "http://localhost:3000",
+):
+    """Redirect browser to Slack OAuth authorization URL."""
+    import os
+    import urllib.parse
+    from fastapi.responses import RedirectResponse
+    client_id = os.environ.get("SLACK_CLIENT_ID", "")
+    if not client_id:
+        # Redirect back to settings with an error rather than raising
+        return RedirectResponse(url=f"{frontend_url}/settings?error=slack_not_configured")
+    scopes = "channels:read,chat:write,users:read,im:write"
+    # Embed frontend_url in redirect_uri so callback can redirect back correctly
+    callback_uri = f"{redirect_uri}?frontend_url={urllib.parse.quote(frontend_url)}"
+    auth_url = (
+        "https://slack.com/oauth/v2/authorize"
+        f"?client_id={client_id}"
+        f"&scope={scopes}"
+        f"&redirect_uri={urllib.parse.quote(redirect_uri, safe='')}"
+        f"&state={org_id}"
+    )
+    return RedirectResponse(url=auth_url)
+
+
+@app.get("/integrations/slack/callback")
+def slack_oauth_callback(
+    code: str = "",
+    state: str = "org-1",
+    error: str = "",
+    frontend_url: str = "http://localhost:3000",
+) -> "RedirectResponse":
+    """Handle Slack OAuth callback — exchange code for token, persist, redirect to frontend."""
+    import os
+    import httpx
+    from fastapi.responses import RedirectResponse as _Redirect
+    settings_url = f"{frontend_url}/settings"
+    if error:
+        return _Redirect(url=f"{settings_url}?error={error}")
+    client_id = os.environ.get("SLACK_CLIENT_ID", "")
+    client_secret = os.environ.get("SLACK_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        return _Redirect(url=f"{settings_url}?error=slack_not_configured")
+    try:
+        resp = httpx.post(
+            "https://slack.com/api/oauth.v2.access",
+            data={"code": code, "client_id": client_id, "client_secret": client_secret},
+            timeout=10,
+        )
+        data = resp.json()
+    except Exception:
+        return _Redirect(url=f"{settings_url}?error=token_exchange_failed")
+    if not data.get("ok"):
+        err_code = data.get("error", "oauth_failed")
+        return _Redirect(url=f"{settings_url}?error={err_code}")
+    token: str = data.get("access_token", "")
+    team: str = (data.get("team") or {}).get("name", "")
+    bot_name: str = (data.get("bot_user_id") or "")
+    try:
+        service.credentials.store_credential(
+            provider="slack", org_id=state, token=token,
+            metadata={"team": team, "bot": bot_name, "scope": data.get("scope", "")},
+        )
+    except Exception:
+        pass
+    return _Redirect(url=f"{settings_url}?slack_oauth=success")
+
+
+@app.delete("/integrations/slack/disconnect")
+def slack_disconnect(org_id: str = "org-1") -> dict:
+    """Remove stored Slack credentials for the org."""
+    try:
+        service.credentials.delete_credential("slack", org_id)
+    except Exception:
+        pass
+    return {"ok": True, "connected": False}
+
+
+class SlackPostPayload(BaseModel):
+    channel: str
+    text: str
+    org_id: str = "org-1"
+    thread_ts: Optional[str] = None
+
+
+@app.post("/integrations/slack/post")
+def slack_post_message(payload: SlackPostPayload) -> dict:
+    """Post a message to a Slack channel on behalf of the org."""
+    token: Optional[str] = None
+    try:
+        if service.credentials.has_credential("slack", payload.org_id):
+            cred = service.credentials.get_credential("slack", payload.org_id)
+            token = cred.token if cred else None
+    except Exception:
+        pass
+    from packages.integrations.slack.client import SlackClient
+    client = SlackClient(token=token)
+    return client.post_message(payload.channel, payload.text, thread_ts=payload.thread_ts)
+
+
+@app.post("/webhooks/inbound/{source}", status_code=202)
+async def inbound_webhook(source: str, request: Request) -> dict:
+    """Generic inbound webhook router.
+
+    Currently handles: slack (Slack Events API — URL verification + mention events).
+    Returns 202 Accepted immediately.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    if source == "slack":
+        # Slack URL verification challenge
+        if body.get("type") == "url_verification":
+            return {"challenge": body.get("challenge", "")}
+        event = body.get("event", {})
+        event_type = event.get("type", "")
+        if event_type in ("app_mention", "message"):
+            channel = event.get("channel", "")
+            user = event.get("user", "")
+            text = event.get("text", "")
+            try:
+                service.activity.log(
+                    action="webhook_event", entity_type="slack_message", entity_id=channel,
+                    entity_title=text[:80], actor_id=user or "slack",
+                    event_type=event_type, channel=channel,
+                )
+            except Exception:
+                pass
+
+    return {"ok": True, "source": source, "status": "received"}
 
 
 # ── KPI / Analytics endpoints ────────────────────────────────────────────────
@@ -1701,6 +1931,72 @@ def get_okr_hierarchy(obj_id: str) -> dict:
     if not tree:
         raise HTTPException(status_code=404, detail="Objective not found")
     return tree
+
+
+class OKRGradePayload(BaseModel):
+    grade: float  # 0.0 – 1.0
+    retrospective: str = ""
+    carry_forward: bool = False
+    next_period: Optional[str] = None
+
+
+@app.post("/okrs/{obj_id}/grade", status_code=200)
+def grade_objective(obj_id: str, payload: OKRGradePayload) -> dict:
+    """Grade a completed objective on a 0.0–1.0 scale.
+
+    Grade labels:
+      0.0–0.09 = Did Not Start
+      0.1–0.44 = Partial
+      0.45–0.74 = Good Progress
+      0.75–1.0  = Fully Achieved
+
+    Set carry_forward=true to clone the objective into the next period.
+    """
+    try:
+        result = service.okrs.grade_objective(
+            obj_id,
+            grade=payload.grade,
+            retrospective=payload.retrospective,
+            carry_forward=payload.carry_forward,
+            next_period=payload.next_period,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Objective not found")
+    # Log activity
+    try:
+        service.activity.log(
+            action="graded", entity_type="objective", entity_id=obj_id,
+            entity_title=result.get("title", obj_id), actor_id="user-1",
+            grade=result["grade"], grade_label=result["grade_label"],
+        )
+    except Exception:
+        pass
+    return result
+
+
+@app.get("/okrs/overdue-checkins")
+def list_overdue_checkins(org_id: str = "org-1", days: int = 7) -> list[dict]:
+    """Return active objectives with no check-in in the last `days` days."""
+    from dataclasses import asdict
+    objs = service.okrs.list_overdue_checkins(org_id=org_id, days=days)
+    return [asdict(o) for o in objs]
+
+
+# ── Scheduler endpoints ───────────────────────────────────────────────────────
+
+@app.get("/admin/scheduler/jobs")
+def list_scheduler_jobs() -> list[dict]:
+    """List all registered scheduler jobs."""
+    return service.scheduler.list_jobs()
+
+
+@app.post("/admin/scheduler/jobs/{job_id}/trigger")
+def trigger_scheduler_job(job_id: str) -> dict:
+    """Manually trigger a scheduled job."""
+    try:
+        return service.scheduler.trigger_now(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Job not found")
 
 
 # ── Workspace endpoints ───────────────────────────────────────────────────────

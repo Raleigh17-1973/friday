@@ -20,6 +20,9 @@ type ProcessStep = {
   outputs: string[];
   tools: string[];
   sla: string;
+  description?: string;
+  duration_estimate?: string;
+  output_artifact?: string;
 };
 
 type VersionEntry = {
@@ -59,6 +62,7 @@ export default function ProcessDetailPage() {
 
   const [doc, setDoc] = useState<ProcessDoc | null>(null);
   const [history, setHistory] = useState<VersionEntry[]>([]);
+  const [generatedDiagram, setGeneratedDiagram] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<TabId>("overview");
   const [diagramTab, setDiagramTab] = useState<DiagramTab>("flowchart");
@@ -72,8 +76,19 @@ export default function ProcessDetailPage() {
       fetch(`${BACKEND}/processes/${processId}/history`).then((r) => r.json()),
     ])
       .then(([docData, histData]: [unknown, unknown]) => {
-        setDoc(docData as ProcessDoc);
+        const d = docData as ProcessDoc;
+        setDoc(d);
         setHistory(Array.isArray(histData) ? (histData as VersionEntry[]) : []);
+        // If no stored flowchart, fetch auto-generated diagram
+        if (!d.mermaid_flowchart) {
+          fetch(`${BACKEND}/processes/${processId}/diagram`)
+            .then((r) => r.json())
+            .then((data: unknown) => {
+              const diagramData = data as { mermaid?: string };
+              if (diagramData.mermaid) setGeneratedDiagram(diagramData.mermaid);
+            })
+            .catch(() => {});
+        }
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -86,7 +101,9 @@ export default function ProcessDetailPage() {
     </main>
   );
 
-  const activeDiagram = diagramTab === "flowchart" ? doc.mermaid_flowchart : doc.mermaid_swimlane;
+  const activeDiagram = diagramTab === "flowchart"
+    ? (doc.mermaid_flowchart || generatedDiagram)
+    : doc.mermaid_swimlane;
   const completeness = Math.round(doc.completeness_score * 100);
 
   async function handleExport() {
@@ -220,28 +237,51 @@ export default function ProcessDetailPage() {
           )}
 
           {tab === "steps" && (
-            <ol className="steps-list">
-              {doc.steps.map((step, i) => (
-                <li key={step.id || i} className="step-item">
-                  <div className="step-header">
-                    <span className="step-num">{i + 1}</span>
-                    <strong>{step.name}</strong>
-                    {step.owner && <span className="step-owner">{step.owner}</span>}
-                    {step.sla && <span className="step-sla">SLA: {step.sla}</span>}
-                  </div>
-                  {(step.inputs?.length > 0 || step.outputs?.length > 0) && (
-                    <div className="step-io">
-                      {step.inputs?.length > 0 && <span>In: {step.inputs.join(", ")}</span>}
-                      {step.outputs?.length > 0 && <span>Out: {step.outputs.join(", ")}</span>}
-                    </div>
-                  )}
-                  {step.tools?.length > 0 && (
-                    <div className="step-tools">Tools: {step.tools.join(", ")}</div>
-                  )}
-                </li>
-              ))}
-              {doc.steps.length === 0 && <p className="processes-empty">No steps captured yet.</p>}
-            </ol>
+            doc.steps.length === 0 ? (
+              <p className="processes-empty">No steps captured yet.</p>
+            ) : (
+              <div className="steps-table-wrap">
+                <table className="steps-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Step</th>
+                      <th>Owner</th>
+                      <th>Duration</th>
+                      <th>Output</th>
+                      <th>Tools</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {doc.steps.map((step, i) => (
+                      <tr key={step.id || i}>
+                        <td className="step-num-cell">{i + 1}</td>
+                        <td>
+                          <strong>{step.name}</strong>
+                          {step.description && (
+                            <p className="step-desc">{step.description}</p>
+                          )}
+                          {(step.inputs?.length > 0) && (
+                            <p className="step-desc step-io-note">
+                              <span className="io-label">In:</span> {step.inputs.join(", ")}
+                            </p>
+                          )}
+                          {step.sla && (
+                            <p className="step-desc step-io-note">
+                              <span className="io-label">SLA:</span> {step.sla}
+                            </p>
+                          )}
+                        </td>
+                        <td>{step.owner || "—"}</td>
+                        <td>{step.duration_estimate || step.sla || "—"}</td>
+                        <td>{step.output_artifact || (step.outputs?.join(", ")) || "—"}</td>
+                        <td>{step.tools?.length > 0 ? step.tools.join(", ") : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
           )}
 
           {tab === "exceptions" && (

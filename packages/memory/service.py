@@ -75,15 +75,47 @@ class LayeredMemoryService:
     def append_conversation(self, conversation_id: str, event: dict[str, Any]) -> None:
         self._conversation_history[conversation_id].append(event)
 
-    def upsert_semantic(self, org_id: str, facts: dict[str, Any]) -> None:
+    def upsert_semantic(
+        self,
+        org_id: str,
+        facts: dict[str, Any],
+        workspace_id: str | None = None,
+    ) -> None:
         self._semantic_by_org[org_id].update(facts)
         if self._repository is not None:
-            self._repository.upsert_semantic(org_id, facts)
+            self._repository.upsert_semantic(org_id, facts, workspace_id=workspace_id)
             # Embed each fact so it can be recalled by future queries
             for key, value in facts.items():
                 self._store_embedding_async(
                     org_id, f"semantic:{org_id}:{key}", f"{key}: {value}"
                 )
+
+    def list_semantic(
+        self,
+        org_id: str,
+        workspace_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Return semantic memories with metadata from the durable repository.
+
+        Falls back to the in-memory store (without metadata) when no repository.
+        """
+        if self._repository is not None and hasattr(self._repository, "list_semantic"):
+            return self._repository.list_semantic(
+                org_id, workspace_id=workspace_id, limit=limit, offset=offset
+            )
+        # In-memory fallback — no workspace filtering, no metadata
+        store = self._semantic_by_org.get(org_id, {})
+        items = [{"key": k, "value": str(v), "workspace_id": None, "created_at": None, "updated_at": None}
+                 for k, v in store.items()]
+        return items[offset: offset + limit]
+
+    def list_candidates(self, org_id: str) -> list[dict[str, Any]]:
+        """Return pending (unreviewed) memory candidates."""
+        if self._repository is not None and hasattr(self._repository, "list_pending_candidates"):
+            return self._repository.list_pending_candidates(org_id)
+        return []
 
     def add_episode(self, org_id: str, episode: dict[str, Any], *, run_id: str = "unknown") -> None:
         self._episodic_by_org[org_id].append(episode)
