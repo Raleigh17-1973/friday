@@ -346,6 +346,34 @@ def delete_conversation(thread_id: str) -> None:
         pass
 
 
+class BranchPayload(BaseModel):
+    at_message_id: str
+    label: Optional[str] = None
+    org_id: str = "org-1"
+
+
+@app.post("/conversations/{thread_id}/branch", status_code=201)
+def branch_conversation(thread_id: str, payload: BranchPayload) -> dict:
+    """Fork a thread at a specific message, returning the new branch thread."""
+    try:
+        branch = service.conversations.branch_thread(
+            parent_thread_id=thread_id,
+            at_message_id=payload.at_message_id,
+            org_id=payload.org_id,
+            label=payload.label,
+        )
+        return branch.to_dict()
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/conversations/{thread_id}/branches")
+def get_conversation_branches(thread_id: str) -> list[dict]:
+    """List all branch threads forked from the given thread."""
+    branches = service.conversations.get_branches(thread_id)
+    return [b.to_dict() for b in branches]
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 
 @app.post("/runs")

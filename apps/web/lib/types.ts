@@ -12,6 +12,8 @@ export type ConversationThread = {
   id: string;
   title: string;
   updatedAt: string;
+  parentThreadId?: string;
+  branchLabel?: string;
 };
 
 export type ConnectionState = "connected" | "reconnecting" | "offline" | "degraded";

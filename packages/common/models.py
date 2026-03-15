@@ -108,6 +108,9 @@ class PlannerOutput:
     required_tools: list[str]
     risk_level: RiskLevel
     output_format: str
+    # True when foundational domain-specific discovery questions are present.
+    # Generic enrichment questions (timeline, KPI) do NOT set this flag.
+    requires_clarification: bool = False
 
 
 @dataclass

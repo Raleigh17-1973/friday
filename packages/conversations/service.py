@@ -16,6 +16,9 @@ class ConversationThread:
     title: str
     org_id: str
     workspace_id: str | None = None
+    parent_thread_id: str | None = None
+    branch_point_message_id: str | None = None
+    branch_label: str | None = None
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
 
@@ -72,6 +75,17 @@ class ConversationService:
                 ON conversation_threads(org_id, updated_at);
         """)
         self._conn.commit()
+        # Additive migrations for branching support
+        for stmt in [
+            "ALTER TABLE conversation_threads ADD COLUMN parent_thread_id TEXT",
+            "ALTER TABLE conversation_threads ADD COLUMN branch_point_message_id TEXT",
+            "ALTER TABLE conversation_threads ADD COLUMN branch_label TEXT",
+        ]:
+            try:
+                self._conn.execute(stmt)
+            except Exception:
+                pass
+        self._conn.commit()
 
     # ── Threads ──────────────────────────────────────────────────────────────
 
@@ -106,14 +120,100 @@ class ConversationService:
         ).fetchone()
         if row is None:
             return None
-        return ConversationThread(**dict(row))
+        return self._row_to_thread(dict(row))
 
     def list_threads(self, org_id: str = "org-1", limit: int = 100) -> list[ConversationThread]:
         rows = self._conn.execute(
             "SELECT * FROM conversation_threads WHERE org_id = ? ORDER BY updated_at DESC LIMIT ?",
             (org_id, limit),
         ).fetchall()
-        return [ConversationThread(**dict(r)) for r in rows]
+        return [self._row_to_thread(dict(r)) for r in rows]
+
+    @staticmethod
+    def _row_to_thread(row: dict[str, Any]) -> "ConversationThread":
+        """Convert a DB row dict to ConversationThread, tolerating missing branch columns."""
+        return ConversationThread(
+            thread_id=row["thread_id"],
+            title=row.get("title", "New conversation"),
+            org_id=row.get("org_id", "org-1"),
+            workspace_id=row.get("workspace_id"),
+            parent_thread_id=row.get("parent_thread_id"),
+            branch_point_message_id=row.get("branch_point_message_id"),
+            branch_label=row.get("branch_label"),
+            created_at=row.get("created_at", utc_now_iso()),
+            updated_at=row.get("updated_at", utc_now_iso()),
+        )
+
+    def get_branches(self, thread_id: str) -> list[ConversationThread]:
+        """Return all threads that branch from the given thread, ordered by creation time."""
+        rows = self._conn.execute(
+            "SELECT * FROM conversation_threads WHERE parent_thread_id = ? ORDER BY created_at ASC",
+            (thread_id,),
+        ).fetchall()
+        return [self._row_to_thread(dict(r)) for r in rows]
+
+    def branch_thread(
+        self,
+        parent_thread_id: str,
+        at_message_id: str,
+        org_id: str = "org-1",
+        label: str | None = None,
+    ) -> ConversationThread:
+        """Fork a thread at a specific message.
+
+        Creates a new child thread, copies all messages up to and including
+        `at_message_id` from the parent, then returns the new thread.
+        """
+        parent = self.get_thread(parent_thread_id)
+        if parent is None:
+            raise KeyError(f"Thread {parent_thread_id!r} not found")
+
+        # Determine fork point — copy all messages up to (and including) at_message_id
+        all_msgs = self.get_messages(parent_thread_id)
+        fork_msgs = []
+        for msg in all_msgs:
+            fork_msgs.append(msg)
+            if msg.message_id == at_message_id:
+                break
+
+        now = utc_now_iso()
+        branch_num = len(self.get_branches(parent_thread_id)) + 1
+        branch_title = label or f"Branch {branch_num} of {parent.title}"
+        new_tid = f"branch_{uuid.uuid4().hex[:12]}"
+        new_thread = ConversationThread(
+            thread_id=new_tid,
+            title=branch_title,
+            org_id=org_id,
+            workspace_id=parent.workspace_id,
+            parent_thread_id=parent_thread_id,
+            branch_point_message_id=at_message_id,
+            branch_label=label or f"Branch {branch_num}",
+            created_at=now,
+            updated_at=now,
+        )
+        self._conn.execute(
+            "INSERT INTO conversation_threads "
+            "(thread_id, title, org_id, workspace_id, parent_thread_id, branch_point_message_id, branch_label, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                new_thread.thread_id, new_thread.title, new_thread.org_id,
+                new_thread.workspace_id, parent_thread_id, at_message_id,
+                new_thread.branch_label, now, now,
+            ),
+        )
+        # Copy messages up to fork point into new thread
+        for msg in fork_msgs:
+            self._conn.execute(
+                "INSERT INTO conversation_messages "
+                "(message_id, thread_id, role, content, metadata_json, created_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (
+                    f"msg_{uuid.uuid4().hex[:12]}", new_tid, msg.role, msg.content,
+                    json.dumps(msg.metadata), msg.created_at,
+                ),
+            )
+        self._conn.commit()
+        return new_thread
 
     def rename_thread(self, thread_id: str, title: str) -> ConversationThread | None:
         now = utc_now_iso()

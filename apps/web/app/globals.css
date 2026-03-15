@@ -3300,3 +3300,523 @@ input:focus-visible {
   padding: var(--space-2) 0;
 }
 .pagination-info { font-size: 0.8rem; color: var(--muted); }
+
+/* ═══════════════════════════════════════════════════════════
+   ITEM 13 — ARTIFACT EDITOR
+   ═══════════════════════════════════════════════════════════ */
+
+.ae-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 300;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.ae-shell {
+  background: var(--surface-1, #fff);
+  border-radius: var(--radius-m, 10px);
+  width: 100%;
+  max-width: 1200px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+}
+
+.ae-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.625rem 1rem;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  flex-shrink: 0;
+  gap: 0.75rem;
+  background: var(--bg, #f9fafb);
+}
+
+.ae-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 360px;
+}
+
+.ae-mode-switch {
+  display: flex;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.ae-mode-btn {
+  padding: 0.3rem 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted, #6b7280);
+  font-family: inherit;
+  transition: background 0.1s, color 0.1s;
+}
+.ae-mode-btn:not(:last-child) {
+  border-right: 1px solid var(--border, #e5e7eb);
+}
+.ae-mode-btn.active {
+  background: var(--accent, #6366f1);
+  color: #fff;
+}
+
+.ae-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 0 2px;
+}
+
+.ae-tb-btn {
+  padding: 0.25rem 0.45rem;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-family: ui-monospace, monospace;
+  color: var(--text, #111827);
+  transition: background 0.1s;
+}
+.ae-tb-btn:hover { background: var(--bg, #f9fafb); }
+
+.ae-tb-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border, #e5e7eb);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.ae-icon-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0.25rem 0.375rem;
+  border-radius: 5px;
+  color: var(--text-muted, #6b7280);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  position: relative;
+  font-family: inherit;
+}
+.ae-icon-btn:hover { background: var(--bg, #f9fafb); }
+
+.ae-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: var(--accent, #6366f1);
+  color: #fff;
+  border-radius: 999px;
+  padding: 0 4px;
+  min-width: 14px;
+  line-height: 14px;
+  display: inline-block;
+  text-align: center;
+}
+
+.ae-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  background: var(--surface-1, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  min-width: 240px;
+  max-height: 300px;
+  overflow-y: auto;
+  z-index: 10;
+}
+
+.ae-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.5rem 0.875rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-family: inherit;
+  color: var(--text, #111827);
+  text-align: left;
+}
+.ae-dropdown-item:hover { background: var(--bg, #f9fafb); }
+
+.ae-revise-panel {
+  padding: 0.875rem 1rem;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  background: var(--surface-raised, #fff);
+  flex-shrink: 0;
+}
+
+.ae-revise-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.ae-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.ae-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ae-pane + .ae-pane {
+  border-left: 1px solid var(--border, #e5e7eb);
+}
+
+.ae-pane-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted, #6b7280);
+  padding: 0.375rem 1rem;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  background: var(--bg, #f9fafb);
+  flex-shrink: 0;
+}
+
+.ae-textarea {
+  flex: 1;
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 1rem;
+  font-family: ui-monospace, "JetBrains Mono", "Fira Code", monospace;
+  font-size: 0.8125rem;
+  line-height: 1.7;
+  color: var(--text, #111827);
+  background: var(--surface-1, #fff);
+  tab-size: 2;
+}
+.ae-textarea::placeholder { color: var(--text-muted); }
+
+.ae-preview-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem;
+}
+
+.ae-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 1rem;
+  border-top: 1px solid var(--border, #e5e7eb);
+  background: var(--bg, #f9fafb);
+  flex-shrink: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ITEM 18 — CONVERSATION BRANCHING
+   ═══════════════════════════════════════════════════════════ */
+
+.branch-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg, #f9fafb);
+  border: 1px solid var(--border, #e5e7eb);
+  cursor: pointer;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+.branch-indicator:hover {
+  background: var(--accent-subtle, #eef2ff);
+  color: var(--accent, #6366f1);
+  border-color: var(--accent, #6366f1);
+}
+
+.branch-origin-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  background: var(--bg, #f9fafb);
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  flex-shrink: 0;
+}
+
+.branch-origin-link {
+  color: var(--accent, #6366f1);
+  cursor: pointer;
+  font-weight: 500;
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: inherit;
+  padding: 0;
+}
+.branch-origin-link:hover { text-decoration: underline; }
+
+.thread-branches {
+  padding: 0 0 0 0.75rem;
+  margin: 0;
+  border-left: 2px solid var(--accent, #6366f1);
+  margin-left: 1rem;
+}
+
+.thread-branch-item {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  border-radius: 5px;
+  cursor: pointer;
+  background: none;
+  border: none;
+  font-family: inherit;
+  text-align: left;
+  width: 100%;
+}
+.thread-branch-item:hover {
+  background: var(--accent-subtle, #eef2ff);
+  color: var(--accent, #6366f1);
+}
+.thread-branch-item.active {
+  background: var(--accent-subtle, #eef2ff);
+  color: var(--accent, #6366f1);
+  font-weight: 500;
+}
+
+.fork-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.msg-friday:hover .fork-btn,
+.fork-btn:focus {
+  opacity: 1;
+}
+.fork-btn:hover {
+  background: var(--bg, #f9fafb);
+  color: var(--accent, #6366f1);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ITEM 19 — DESIGN SYSTEM PAGE
+   ═══════════════════════════════════════════════════════════ */
+
+.ds-page {
+  max-width: 1000px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.ds-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.ds-section-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  padding-bottom: 0.5rem;
+}
+
+.ds-swatch-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.ds-swatch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.ds-swatch-color {
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.08);
+}
+
+.ds-swatch-label {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  text-align: center;
+  font-family: ui-monospace, monospace;
+}
+
+.ds-type-scale {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.ds-type-row {
+  display: flex;
+  align-items: baseline;
+  gap: 1.5rem;
+}
+
+.ds-type-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-family: ui-monospace, monospace;
+  width: 80px;
+  flex-shrink: 0;
+}
+
+.ds-space-grid {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-end;
+}
+
+.ds-space-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.ds-space-block {
+  background: var(--accent, #6366f1);
+  opacity: 0.6;
+  border-radius: 3px;
+  width: 24px;
+}
+
+.ds-elevation-grid {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.ds-elev-card {
+  width: 100px;
+  height: 70px;
+  border-radius: 10px;
+  background: var(--surface-1, #fff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: ui-monospace, monospace;
+}
+
+/* ── Branch origin banner (topbar) ───────────────────────────────────────── */
+.topbar-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.topbar-title-group h1 {
+  margin: 0;
+}
+
+/* Override existing .branch-origin-banner to sit inline under title */
+.topbar-title-group .branch-origin-banner {
+  padding: 0;
+  background: none;
+  border: none;
+  font-size: 0.75rem;
+}
+
+.branch-origin-label {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ── Branch thread list structure ────────────────────────────────────────── */
+.thread-item-group {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.thread-list-inner {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.thread-branches-container {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.thread-item-branch .thread-title {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  padding-left: 0.5rem;
+}
+
+.thread-item-branch.active .thread-title {
+  color: var(--accent, #6366f1);
+}
+
+.thread-branch-indicator {
+  opacity: 0.6;
+  font-size: 0.7rem;
+  margin-right: 0.125rem;
+}
+
+/* thread-branches: already defined above; override margin for container */
+.thread-branches-container .thread-branches {
+  margin-left: 0.75rem;
+  margin-top: 0.125rem;
+  margin-bottom: 0.25rem;
+}

@@ -230,7 +230,7 @@ function LeftRail({
         ))}
       </nav>
 
-      <button className="new-chat" onClick={onCreate}>
+      <button className="new-chat" onClick={() => onCreate()}>
         + New chat
       </button>
       <input
@@ -244,54 +244,87 @@ function LeftRail({
       <section>
         <h2>Threads</h2>
         <ul className="thread-list">
-          {filtered.map((thread) => (
-            <li key={thread.id} className={`thread-item${thread.id === activeThreadId ? " active" : ""}`}>
-              <button className="thread-title" onClick={() => onSelect(thread.id)}>
-                {thread.title}
-              </button>
+          {(() => {
+            const topLevel = filtered.filter((t) => !t.parentThreadId);
+            const branchesByParent = filtered.reduce<Record<string, ConversationThread[]>>((acc, t) => {
+              if (t.parentThreadId) {
+                if (!acc[t.parentThreadId]) acc[t.parentThreadId] = [];
+                acc[t.parentThreadId].push(t);
+              }
+              return acc;
+            }, {});
 
-              <button
-                className="thread-menu-btn"
-                aria-label={`Options for ${thread.title}`}
-                onClick={(e) => handleMenuToggle(e, thread.id)}
+            const renderThreadItem = (thread: ConversationThread, isBranch = false) => (
+              <li
+                key={thread.id}
+                className={`thread-item${thread.id === activeThreadId ? " active" : ""}${isBranch ? " thread-item-branch" : ""}`}
               >
-                ···
-              </button>
+                <button className="thread-title" onClick={() => onSelect(thread.id)}>
+                  {isBranch && <span className="thread-branch-indicator" aria-hidden="true">⑂ </span>}
+                  {isBranch ? (thread.branchLabel ?? thread.title) : thread.title}
+                </button>
 
-              {menuOpen === thread.id && (
-                <div className="thread-menu" role="menu" onClick={(e) => e.stopPropagation()}>
-                  <button
-                    className="thread-menu-item"
-                    role="menuitem"
-                    onClick={(e) => handleRename(e, thread.id)}
-                  >
-                    Rename
-                  </button>
-                  <button
-                    className="thread-menu-item thread-menu-item-danger"
-                    role="menuitem"
-                    onClick={(e) => handleDeleteClick(e, thread.id)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              )}
+                <button
+                  className="thread-menu-btn"
+                  aria-label={`Options for ${thread.title}`}
+                  onClick={(e) => handleMenuToggle(e, thread.id)}
+                >
+                  ···
+                </button>
 
-              {confirmDelete === thread.id && (
-                <div className="thread-delete-confirm" onClick={(e) => e.stopPropagation()}>
-                  <span className="thread-delete-msg">Delete this thread? This cannot be undone.</span>
-                  <div className="thread-delete-actions">
-                    <button className="btn btn-secondary btn-sm" onClick={() => setConfirmDelete(null)}>
-                      Cancel
+                {menuOpen === thread.id && (
+                  <div className="thread-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      className="thread-menu-item"
+                      role="menuitem"
+                      onClick={(e) => handleRename(e, thread.id)}
+                    >
+                      Rename
                     </button>
-                    <button className="btn btn-danger btn-sm" onClick={() => handleDeleteConfirm(thread.id)}>
+                    <button
+                      className="thread-menu-item thread-menu-item-danger"
+                      role="menuitem"
+                      onClick={(e) => handleDeleteClick(e, thread.id)}
+                    >
                       Delete
                     </button>
                   </div>
-                </div>
-              )}
-            </li>
-          ))}
+                )}
+
+                {confirmDelete === thread.id && (
+                  <div className="thread-delete-confirm" onClick={(e) => e.stopPropagation()}>
+                    <span className="thread-delete-msg">Delete this thread? This cannot be undone.</span>
+                    <div className="thread-delete-actions">
+                      <button className="btn btn-secondary btn-sm" onClick={() => setConfirmDelete(null)}>
+                        Cancel
+                      </button>
+                      <button className="btn btn-danger btn-sm" onClick={() => handleDeleteConfirm(thread.id)}>
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </li>
+            );
+
+            return topLevel.map((thread) => {
+              const branches = branchesByParent[thread.id] ?? [];
+              return (
+                <li key={`wrap-${thread.id}`} className="thread-item-group">
+                  <ul className="thread-list-inner">
+                    {renderThreadItem(thread)}
+                    {branches.length > 0 && (
+                      <li className="thread-branches-container">
+                        <ul className="thread-branches">
+                          {branches.map((b) => renderThreadItem(b, true))}
+                        </ul>
+                      </li>
+                    )}
+                  </ul>
+                </li>
+              );
+            });
+          })()}
         </ul>
       </section>
 
@@ -355,11 +388,13 @@ function MessageRow({
   precedingUserText,
   onRegenerate,
   onFeedback,
+  onFork,
 }: {
   message: FridayMessage;
   precedingUserText?: string;
   onRegenerate?: (text: string) => void;
   onFeedback?: (runId: string, approved: boolean) => void;
+  onFork?: (messageId: string) => void;
 }) {
   const isFriday = message.role === "friday";
   const segments = isFriday ? parseSegments(message.text) : null;
@@ -511,6 +546,15 @@ function MessageRow({
               title="Regenerate this response"
             >
               ↺ Regenerate
+            </button>
+          )}
+          {onFork && message.id && (
+            <button
+              className="msg-action-btn fork-btn"
+              onClick={() => onFork(message.id!)}
+              title="Fork conversation from this message"
+            >
+              ⑂ Fork
             </button>
           )}
           <button
@@ -699,12 +743,14 @@ function Transcript({
   isStreaming,
   onRegenerate,
   onFeedback,
+  onFork,
 }: {
   messages: FridayMessage[];
   progress: string;
   isStreaming: boolean;
   onRegenerate: (text: string) => void;
   onFeedback: (runId: string, approved: boolean) => void;
+  onFork?: (messageId: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [showJump, setShowJump] = useState(false);
@@ -757,6 +803,7 @@ function Transcript({
               precedingUserText={precedingUserText}
               onRegenerate={onRegenerate}
               onFeedback={onFeedback}
+              onFork={onFork}
             />
           );
         })}
@@ -1198,6 +1245,9 @@ export function Workspace() {
   }, []);
 
   const activeThread = threads.find((thread) => thread.id === activeThreadId) ?? threads[0];
+  const parentThread = activeThread?.parentThreadId
+    ? threads.find((t) => t.id === activeThread.parentThreadId) ?? null
+    : null;
   const showReload = !!process.env.NEXT_PUBLIC_ADMIN_API_KEY;
   const [reloadState, setReloadState] = useState<"idle" | "loading" | "ok" | "error">("idle");
   const [reloadMessage, setReloadMessage] = useState("");
@@ -1207,6 +1257,24 @@ export function Workspace() {
     const proposal = window.prompt("Rename conversation", current?.title ?? "");
     if (!proposal) return;
     renameThread(threadId, proposal);
+  };
+
+  const handleFork = async (messageId: string) => {
+    if (!activeThreadId) return;
+    const BACKEND_URL = process.env.NEXT_PUBLIC_FRIDAY_BACKEND_URL ?? "http://127.0.0.1:8000";
+    try {
+      const resp = await fetch(`${BACKEND_URL}/conversations/${activeThreadId}/branch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ at_message_id: messageId }),
+      });
+      if (!resp.ok) return;
+      const branch = await resp.json() as { thread_id: string; title: string };
+      // Register branch thread in local state and navigate to it
+      createThread(branch.thread_id, branch.title);
+    } catch {
+      // silently ignore — user can retry
+    }
   };
 
   const handleReloadRuntime = async () => {
@@ -1241,7 +1309,22 @@ export function Workspace() {
       />
       <section className="center-pane" aria-label="Conversation">
         <header className="topbar">
-          <h1>{activeThread?.title ?? "Friday"}</h1>
+          <div className="topbar-title-group">
+            <h1>{activeThread?.title ?? "Friday"}</h1>
+            {parentThread && (
+              <div className="branch-origin-banner">
+                <span className="branch-origin-label">↳ Branched from</span>
+                <button
+                  className="branch-origin-link"
+                  onClick={() => setActiveThreadId(parentThread.id)}
+                  title={`Go to parent thread: ${parentThread.title}`}
+                  type="button"
+                >
+                  {parentThread.title}
+                </button>
+              </div>
+            )}
+          </div>
           <div className="topbar-meta">
             <StatusDot state={connectionState} />
             {showReload && (
@@ -1269,6 +1352,7 @@ export function Workspace() {
           isStreaming={isStreaming}
           onRegenerate={send}
           onFeedback={sendFeedback}
+          onFork={handleFork}
         />
         <Composer
           onSend={send}

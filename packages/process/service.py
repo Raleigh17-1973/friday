@@ -39,7 +39,7 @@ def _build_mermaid(doc: ProcessDocument) -> str:
     for j, dp in enumerate(doc.decision_points or []):
         cond = (dp.get("condition") or f"Decision {j + 1}")[:40].replace('"', "'")
         d_node = f"d{j + 1}"
-        lines.append(f'    {d_node}{{"{cond}?"}}}')
+        lines.append(f'    {d_node}{{"{cond}?"}}')
         paths: dict[str, str] = dp.get("paths") or {}
         for label, target in paths.items():
             # target may be a step id or free text

@@ -112,6 +112,21 @@ _AGENT_DISPLAY_NAMES = {
 }
 
 
+def _build_discovery_response(questions: list[str], problem_statement: str) -> str:
+    """Format discovery questions as a natural, conversational response.
+
+    Called when the planner determines the request needs more context before
+    Friday can produce a meaningful full_deliverable artifact.
+    """
+    numbered = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(questions))
+    return (
+        "Before I put this together, I want to make sure I get it right. "
+        "A few quick questions:\n\n"
+        f"{numbered}\n\n"
+        "Once you share those details, I'll produce the complete document."
+    )
+
+
 def _is_provenance_question(message: str) -> bool:
     """Return True if the message is asking about prior consultation/agent usage."""
     lower = message.lower().strip()
@@ -245,6 +260,55 @@ class FridayManager:
         )
         plan = build_plan(planning_message, llm=self._llm)
         validate_required_fields(plan, PLANNER_OUTPUT_SCHEMA, "PlannerOutput")
+
+        # Discovery gate: when Friday would produce a full deliverable but the planner
+        # has flagged foundational missing information (domain-specific, not generic),
+        # ask the questions first instead of generating a document that will be wrong.
+        if plan.output_format == "full_deliverable" and plan.requires_clarification:
+            questions_text = _build_discovery_response(plan.missing_information, plan.problem_statement)
+            from packages.common.models import FinalAnswerPackage
+            discovery_answer = FinalAnswerPackage(
+                direct_answer=questions_text,
+                executive_summary="Clarifying questions before producing the deliverable.",
+                key_assumptions=[],
+                major_risks=[],
+                recommended_next_steps=["Answer the questions above so Friday can produce a complete, accurate document."],
+                what_i_would_do_first=None,
+                experts_consulted=[],
+                confidence=1.0,
+            )
+            self._memory.append_conversation(
+                request.conversation_id,
+                {
+                    "run_id": run_id,
+                    "user": request.message,
+                    "final_answer": asdict(discovery_answer),
+                    "selected_agents": [],
+                },
+            )
+            return {
+                "run_id": run_id,
+                "final_answer": asdict(discovery_answer),
+                "planner": asdict(plan),
+                "tool_calls": [],
+                "specialist_memos": [],
+                "critic_report": {
+                    "blind_spots": [],
+                    "challenged_assumptions": [],
+                    "alternative_path": "",
+                    "residual_risks": [],
+                    "confidence": 1.0,
+                },
+                "approval": None,
+                "memory_candidates": [],
+                "memory_context": {
+                    "conversation_events": len(memory_bundle.conversation),
+                    "episodic_items": len(memory_bundle.episodic),
+                },
+                "write_actions": [],
+                "observability": {},
+                "response": questions_text,
+            }
 
         specialists = []
         for specialist_id in plan.recommended_specialists:
@@ -444,6 +508,35 @@ class FridayManager:
             yield {"event": "status", "label": "Planning your request"}
             plan = build_plan(planning_message, llm=self._llm)
 
+            # Discovery gate — streaming path: same logic as non-streaming
+            if plan.output_format == "full_deliverable" and plan.requires_clarification:
+                questions_text = _build_discovery_response(plan.missing_information, plan.problem_statement)
+                yield {"event": "token", "text": questions_text}
+                self._memory.append_conversation(
+                    request.conversation_id,
+                    {
+                        "run_id": run_id,
+                        "user": request.message,
+                        "final_answer": {
+                            "direct_answer": questions_text,
+                            "executive_summary": "Clarifying questions before producing the deliverable.",
+                            "experts_consulted": [],
+                            "confidence": 1.0,
+                        },
+                        "selected_agents": [],
+                    },
+                )
+                yield {
+                    "event": "done",
+                    "run_id": run_id,
+                    "selected_agents": [],
+                    "output_format": "executive_brief",
+                    "domains": plan.domains_involved,
+                    "llm_active": self._llm is not None,
+                    "write_actions": [],
+                }
+                return
+
             specialists = []
             for specialist_id in plan.recommended_specialists:
                 s = self._registry.build_specialist(specialist_id)
@@ -508,6 +601,24 @@ class FridayManager:
                             "output": {},
                             "error": str(exc),
                         })
+
+            # Persist the run trace to the audit log so GET /runs/{run_id} can serve it
+            stream_trace = RunTrace(
+                run_id=run_id,
+                org_id=request.org_id,
+                user_id=request.user_id,
+                conversation_id=request.conversation_id,
+                planner=plan,
+                selected_agents=experts,
+                tool_calls=[],
+                specialist_memos=memos,
+                critic_report=critic_report,
+                final_answer=final_answer,
+                confidence=final_answer.confidence or 0.0,
+                feedback={},
+                outcome={"streaming": True},
+            )
+            self._audit.record_run(stream_trace)
 
             self._memory.append_conversation(
                 request.conversation_id,

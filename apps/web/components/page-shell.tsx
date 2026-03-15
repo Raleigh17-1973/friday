@@ -11,6 +11,7 @@ import {
   Folders,
   Home,
   MessageSquare,
+  Palette,
   Settings,
   Target,
   Workflow,
@@ -45,8 +46,9 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/analytics",  icon: BarChart2,     label: "Analytics"       },
   { href: "/okrs",       icon: Target,        label: "OKRs"            },
   { href: "/workspaces", icon: Folders,       label: "Workspaces"      },
-  { href: "/qa",         icon: FlaskConical,  label: "QA Registry",    roles: ["developer", "dev_admin"] },
-  { href: "/settings",   icon: Settings,      label: "Settings",       roles: ["developer", "dev_admin", "tool_admin"] },
+  { href: "/qa",             icon: FlaskConical,   label: "QA Registry",    roles: ["developer", "dev_admin"] },
+  { href: "/settings",       icon: Settings,       label: "Settings",       roles: ["developer", "dev_admin", "tool_admin"] },
+  { href: "/design-system",  icon: Palette,        label: "Design System",  roles: ["developer", "dev_admin"] },
 ];
 
 interface BreadcrumbItem {

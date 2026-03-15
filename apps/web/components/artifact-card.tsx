@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { MarkdownMessage } from "@/components/markdown-message";
+import { ArtifactEditor } from "@/components/artifact-editor";
 
 export type Artifact = {
   artifact_id: string;
@@ -85,8 +86,12 @@ function ArtifactModal({ artifact, onClose }: { artifact: Artifact; onClose: () 
   );
 }
 
+const TEXT_TYPES = new Set(["memo", "report", "analysis", "checklist", "document", "text", "markdown"]);
+
 export function ArtifactCard({ artifact }: { artifact: Artifact }) {
   const [showPreview, setShowPreview] = useState(false);
+  const [showEditor, setShowEditor] = useState(false);
+  const isText = TEXT_TYPES.has(artifact.type.toLowerCase());
 
   return (
     <>
@@ -110,6 +115,15 @@ export function ArtifactCard({ artifact }: { artifact: Artifact }) {
           >
             Preview
           </button>
+          {isText && (
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setShowEditor(true)}
+              title="Open in editor"
+            >
+              Edit
+            </button>
+          )}
           {artifact.download_url && (
             <a
               href={artifact.download_url}
@@ -126,6 +140,10 @@ export function ArtifactCard({ artifact }: { artifact: Artifact }) {
 
       {showPreview && (
         <ArtifactModal artifact={artifact} onClose={() => setShowPreview(false)} />
+      )}
+
+      {showEditor && (
+        <ArtifactEditor artifact={artifact} onClose={() => setShowEditor(false)} />
       )}
     </>
   );

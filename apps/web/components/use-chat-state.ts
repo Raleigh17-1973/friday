@@ -159,18 +159,29 @@ export function useChatState() {
     });
   };
 
-  const createThread = () => {
-    const thread: ConversationThread = { id: id(), title: "New chat", updatedAt: nowIso() };
-    setThreads((prev) => [thread, ...prev]);
+  const createThread = (existingId?: string, existingTitle?: string) => {
+    const thread: ConversationThread = {
+      id: existingId ?? id(),
+      title: existingTitle ?? "New chat",
+      updatedAt: nowIso(),
+    };
+    setThreads((prev) => {
+      // Don't add duplicate if thread already exists
+      if (prev.some((t) => t.id === thread.id)) return prev;
+      return [thread, ...prev];
+    });
     setMessagesByThread((prev) => ({ ...prev, [thread.id]: [] }));
     setActiveThreadId(thread.id);
     setProgress("Ready");
     // Persist to backend (fire-and-forget — local state is already updated)
-    fetch(`${BACKEND}/conversations`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ thread_id: thread.id, title: thread.title, org_id: "web-org" }),
-    }).catch(() => undefined);
+    if (!existingId) {
+      fetch(`${BACKEND}/conversations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thread_id: thread.id, title: thread.title, org_id: "web-org" }),
+      }).catch(() => undefined);
+    }
+    return thread.id;
   };
 
   const renameThread = (threadId: string, title: string) => {
