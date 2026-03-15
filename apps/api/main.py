@@ -1100,6 +1100,13 @@ def create_kpi(payload: KPICreatePayload) -> dict:
 @app.post("/kpis/{kpi_id}/data", status_code=201)
 def record_kpi_data(kpi_id: str, payload: KPIDataPayload) -> dict:
     dp = service.kpis.record_data_point(kpi_id, value=payload.value, source=payload.source)
+    # Auto-sync any KRs linked to this KPI
+    try:
+        linked_krs = service.okrs.list_key_results_by_kpi(kpi_id)
+        for kr in linked_krs:
+            service.okrs.sync_kr_from_kpi_value(kr.kr_id, payload.value)
+    except Exception:
+        pass  # KPI sync is best-effort; never fail the data-record call
     return dp.to_dict()
 
 
@@ -1359,6 +1366,37 @@ def update_initiative(initiative_id: str, payload: InitiativeUpdate) -> dict:
 @app.put("/okrs/key-results/{kr_id}/progress")
 def update_kr_progress(kr_id: str, payload: KRProgressPayload) -> dict:
     return service.okrs.update_key_result_progress(kr_id, current=payload.current)
+
+
+class LinkKPIPayload(BaseModel):
+    kpi_id: Optional[str] = None   # None = unlink
+
+
+@app.post("/okrs/key-results/{kr_id}/link-kpi", status_code=200)
+def link_kr_to_kpi(kr_id: str, payload: LinkKPIPayload) -> dict:
+    """Associate a Key Result with a KPI for automatic value sync.
+    Pass kpi_id=null to remove the link."""
+    ok = service.okrs.link_kr_to_kpi(kr_id, payload.kpi_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Key result not found")
+    # If linking (not unlinking), immediately sync the latest KPI value
+    if payload.kpi_id:
+        try:
+            latest = service.kpis.get_latest_value(payload.kpi_id)
+            if latest is not None:
+                service.okrs.sync_kr_from_kpi_value(kr_id, latest)
+        except Exception:
+            pass
+    return {"ok": True, "kr_id": kr_id, "kpi_id": payload.kpi_id}
+
+
+@app.get("/okrs/{obj_id}/hierarchy")
+def get_okr_hierarchy(obj_id: str) -> dict:
+    """Return a full nested tree: objective + all descendant children + their KRs."""
+    tree = service.okrs.get_hierarchy(obj_id)
+    if not tree:
+        raise HTTPException(status_code=404, detail="Objective not found")
+    return tree
 
 
 # ── Workspace endpoints ───────────────────────────────────────────────────────

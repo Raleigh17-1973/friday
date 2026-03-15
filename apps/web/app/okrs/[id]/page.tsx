@@ -23,6 +23,13 @@ interface KeyResult {
   due_date: string;
   notes: string;
   risk_flags: string[];
+  kpi_id?: string | null;
+}
+
+interface KPIOption {
+  kpi_id: string;
+  name: string;
+  unit: string;
 }
 
 interface Initiative {
@@ -265,11 +272,12 @@ function AddKRForm({ objId, onDone }: { objId: string; onDone: () => void }) {
 }
 
 // ── Update KR Form ─────────────────────────────────────────────────────────
-function UpdateKRForm({ kr, onDone }: { kr: KeyResult; onDone: () => void }) {
+function UpdateKRForm({ kr, kpis, onDone }: { kr: KeyResult; kpis: KPIOption[]; onDone: () => void }) {
   const [form, setForm] = useState({
     current_value: kr.current_value,
     status: kr.status,
     notes: kr.notes || "",
+    kpi_id: kr.kpi_id ?? "",
   });
   const [saving, setSaving] = useState(false);
 
@@ -280,7 +288,12 @@ function UpdateKRForm({ kr, onDone }: { kr: KeyResult; onDone: () => void }) {
       await fetch(`${API}/okrs/key-results/${kr.kr_id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          current_value: form.current_value,
+          status: form.status,
+          notes: form.notes,
+          kpi_id: form.kpi_id || null,
+        }),
       });
       onDone();
     } finally {
@@ -326,6 +339,27 @@ function UpdateKRForm({ kr, onDone }: { kr: KeyResult; onDone: () => void }) {
           />
         </label>
       </div>
+      {kpis.length > 0 && (
+        <label style={{ display: "flex", flexDirection: "column", gap: "3px", fontSize: "0.78rem", fontWeight: 600, marginBottom: "0.5rem" }}>
+          Link to KPI (auto-sync)
+          <select
+            className="form-select"
+            value={form.kpi_id}
+            onChange={(e) => setForm({ ...form, kpi_id: e.target.value })}
+            style={{ maxWidth: 320 }}
+          >
+            <option value="">— No KPI link —</option>
+            {kpis.map((k) => (
+              <option key={k.kpi_id} value={k.kpi_id}>
+                {k.name} ({k.unit})
+              </option>
+            ))}
+          </select>
+          <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+            When a new KPI data point is recorded, this KR's value updates automatically.
+          </span>
+        </label>
+      )}
       <div style={{ display: "flex", gap: "0.5rem" }}>
         <button type="submit" className="btn btn-primary btn-sm" disabled={saving}>{saving ? "Saving…" : "Update Progress"}</button>
         <button type="button" className="btn btn-ghost btn-sm" onClick={onDone}>Cancel</button>
@@ -495,6 +529,7 @@ export default function OKRDetailPage() {
   const [obj, setObj] = useState<ObjectiveDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [kpis, setKpis] = useState<KPIOption[]>([]);
   const [editingObj, setEditingObj] = useState(false);
   const [showAddKR, setShowAddKR] = useState(false);
   const [editingKR, setEditingKR] = useState<string | null>(null);
@@ -502,6 +537,14 @@ export default function OKRDetailPage() {
   const [editingInit, setEditingInit] = useState<string | null>(null);
   const [showAddCheckIn, setShowAddCheckIn] = useState(false);
   const [showAllCheckIns, setShowAllCheckIns] = useState(false);
+
+  // Fetch available KPIs for the link-to-KPI select
+  useEffect(() => {
+    fetch(`${API}/kpis?org_id=org-1`)
+      .then((r) => r.json())
+      .then((data: KPIOption[]) => { if (Array.isArray(data)) setKpis(data); })
+      .catch(() => undefined);
+  }, []);
 
   async function load() {
     setLoading(true);
@@ -686,6 +729,7 @@ export default function OKRDetailPage() {
                   const range = kr.target_value - kr.baseline;
                   const progress = range !== 0 ? (kr.current_value - kr.baseline) / range : 0;
                   const isEditing = editingKR === kr.kr_id;
+                  const linkedKpi = kr.kpi_id ? kpis.find((k) => k.kpi_id === kr.kpi_id) : null;
                   return (
                     <div key={kr.kr_id} style={{ border: "1px solid var(--border)", borderRadius: "0.5rem", padding: "1rem" }}>
                       <div style={{ display: "flex", alignItems: "flex-start", gap: "0.75rem", marginBottom: "0.625rem" }}>
@@ -693,7 +737,14 @@ export default function OKRDetailPage() {
                           {METRIC_ICON[kr.metric_type] || "#"}
                         </span>
                         <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: 500, color: "var(--text)", marginBottom: "0.375rem" }}>{kr.title}</div>
+                          <div style={{ fontWeight: 500, color: "var(--text)", marginBottom: "0.375rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                            {kr.title}
+                            {linkedKpi && (
+                              <span style={{ fontSize: "0.7rem", background: "#ecfdf5", color: "#16a34a", border: "1px solid #bbf7d0", borderRadius: "9999px", padding: "1px 8px", fontWeight: 600 }}>
+                                ⚡ Auto-synced from {linkedKpi.name}
+                              </span>
+                            )}
+                          </div>
                           <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
                             <ProgressBar value={progress} status={kr.status} />
                             <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", whiteSpace: "nowrap" }}>
@@ -727,6 +778,7 @@ export default function OKRDetailPage() {
                       {isEditing && (
                         <UpdateKRForm
                           kr={kr}
+                          kpis={kpis}
                           onDone={() => { setEditingKR(null); load(); }}
                         />
                       )}

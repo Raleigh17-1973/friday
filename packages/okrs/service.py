@@ -52,6 +52,7 @@ class KeyResult:
     org_id: str
     created_at: str
     updated_at: str
+    kpi_id: str | None = None      # Linked KPI for auto-sync
 
     @property
     def progress(self) -> float:
@@ -178,6 +179,10 @@ class OKRService:
                     conn.execute(f"ALTER TABLE checkins ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
                 except Exception:
                     pass  # Column already exists
+            try:
+                conn.execute("ALTER TABLE key_results ADD COLUMN kpi_id TEXT")
+            except Exception:
+                pass  # Column already exists
 
     # ---- Objectives ----
     def create_objective(
@@ -345,8 +350,13 @@ class OKRService:
         )
         with sqlite3.connect(self._db_path) as conn:
             conn.execute(
-                """INSERT INTO key_results VALUES
-                   (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                """INSERT INTO key_results
+                   (kr_id, objective_id, title, metric_type,
+                    baseline, current_value, target_value,
+                    unit, owner, data_source, update_cadence,
+                    status, confidence, due_date, notes,
+                    risk_flags, org_id, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (kr.kr_id, kr.objective_id, kr.title, kr.metric_type,
                  kr.baseline, kr.current_value, kr.target_value,
                  kr.unit, kr.owner, kr.data_source, kr.update_cadence,
@@ -357,7 +367,8 @@ class OKRService:
 
     def update_key_result(self, kr_id: str, **kwargs: Any) -> KeyResult | None:
         allowed = {"current_value", "target_value", "baseline", "status", "confidence",
-                   "notes", "due_date", "owner", "data_source", "risk_flags", "title"}
+                   "notes", "due_date", "owner", "data_source", "risk_flags", "title",
+                   "kpi_id"}
         updates = {}
         for k, v in kwargs.items():
             if k not in allowed:
@@ -376,6 +387,7 @@ class OKRService:
         kr = self._get_kr(kr_id)
         if kr:
             self._recompute_progress(kr.objective_id)
+            self._rollup_progress_to_parent(kr.objective_id)
         return kr
 
     def list_key_results(self, objective_id: str) -> list[KeyResult]:
@@ -538,6 +550,7 @@ class OKRService:
         )
 
     def _row_to_kr(self, row) -> KeyResult:
+        keys = row.keys() if hasattr(row, "keys") else []
         return KeyResult(
             kr_id=row["kr_id"], objective_id=row["objective_id"],
             title=row["title"], metric_type=row["metric_type"],
@@ -550,4 +563,70 @@ class OKRService:
             risk_flags=json.loads(row["risk_flags"] or "[]"),
             org_id=row["org_id"],
             created_at=row["created_at"], updated_at=row["updated_at"],
+            kpi_id=row["kpi_id"] if "kpi_id" in keys else None,
         )
+
+    # ---- KPI auto-sync ----
+
+    def link_kr_to_kpi(self, kr_id: str, kpi_id: str | None) -> bool:
+        """Associate a KR with a KPI for automatic value sync. Pass None to unlink."""
+        kr = self._get_kr(kr_id)
+        if kr is None:
+            return False
+        self.update_key_result(kr_id, kpi_id=kpi_id)
+        return True
+
+    def list_key_results_by_kpi(self, kpi_id: str) -> list[KeyResult]:
+        """Return all KRs linked to a given KPI."""
+        with sqlite3.connect(self._db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM key_results WHERE kpi_id = ? ORDER BY created_at",
+                (kpi_id,)
+            ).fetchall()
+        return [self._row_to_kr(r) for r in rows]
+
+    def sync_kr_from_kpi_value(self, kr_id: str, latest_value: float) -> KeyResult | None:
+        """Push a new KPI value into the linked KR's current_value and recompute progress."""
+        return self.update_key_result(kr_id, current_value=latest_value)
+
+    def update_key_result_progress(self, kr_id: str, current: float) -> dict[str, Any]:
+        """Convenience endpoint-adapter: update current_value and return serialized KR."""
+        from dataclasses import asdict
+        kr = self.update_key_result(kr_id, current_value=current)
+        return asdict(kr) if kr else {}
+
+    # ---- Hierarchy rollup ----
+
+    def _rollup_progress_to_parent(self, obj_id: str) -> None:
+        """After a child objective's progress changes, cascade the average upward."""
+        obj = self.get_objective(obj_id)
+        if not obj or not obj.parent_id:
+            return
+        # Recompute parent's progress as average of all direct children's progress
+        children = self.get_children(obj.parent_id, obj.org_id)
+        if not children:
+            return
+        avg = sum(c.progress for c in children) / len(children)
+        now = datetime.utcnow().isoformat() + "Z"
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute(
+                "UPDATE objectives SET progress = ?, updated_at = ? WHERE obj_id = ?",
+                (avg, now, obj.parent_id)
+            )
+        # Recurse upward — terminates when parent has no further parent
+        self._rollup_progress_to_parent(obj.parent_id)
+
+    def get_hierarchy(self, root_id: str, org_id: str = "org-1") -> dict[str, Any]:
+        """Return full tree: root objective + all nested children with their KRs."""
+        from dataclasses import asdict
+        obj = self.get_objective(root_id)
+        if not obj:
+            return {}
+        node: dict[str, Any] = asdict(obj)
+        node["key_results"] = [asdict(kr) for kr in self.list_key_results(root_id)]
+        node["children"] = [
+            self.get_hierarchy(child.obj_id, org_id)
+            for child in self.get_children(root_id, org_id)
+        ]
+        return node
