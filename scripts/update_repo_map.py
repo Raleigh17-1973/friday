@@ -56,6 +56,7 @@ def _route_paths(main_py: Path) -> list[str]:
 def _package_summary(packages_dir: Path) -> list[tuple[str, str]]:
     """Return (package_name, one-line description) for each package."""
     DESCRIPTIONS: dict[str, str] = {
+        "activity":      "Append-only cross-entity activity log (task, OKR, approval events) backed by SQLite",
         "agents":        "Multi-agent framework: 23 specialist manifests, runtime, registry, prompt library",
         "analytics":     "KPI and chart service (Plotly integration)",
         "brand":         "Brand guidelines and asset management",
@@ -163,7 +164,7 @@ def generate_repo_map() -> str:
         "|-----------|---------|",
         "| `apps/api/` | FastAPI backend — routes, service wiring, security |",
         "| `apps/web/` | Next.js 14 frontend — pages, components, hooks |",
-        "| `packages/` | 28 domain packages (agents, memory, tools, okrs, tasks, …) |",
+        "| `packages/` | 29 domain packages (agents, memory, tools, okrs, tasks, …) |",
         "| `workers/` | Orchestrator, eval harness, reflection worker |",
         "| `scripts/` | Dev helpers, agent scaffolder, repo-map generator |",
         "| `tests/` | 12 pytest test files |",
@@ -240,6 +241,7 @@ def generate_repo_map() -> str:
         "/analytics":         "KPI dashboards and charts",
         "/workspaces":        "Workspace listing",
         "/workspaces/[id]":   "Workspace detail — members, OKRs, projects",
+        "/approvals":          "Approval queue with bulk approve/reject, status filters, and policy reason detail",
         "/qa":                "QA dashboard",
         "/settings":          "User settings and integrations",
         "/settings/memory":   "Semantic memory browser",
@@ -312,6 +314,7 @@ def generate_repo_map() -> str:
         "| `friday_conversations.sqlite3` | ConversationService |",
         "| `friday_tasks.sqlite3` | TaskService |",
         "| `friday_notifications.sqlite3` | NotificationService |",
+        "| `friday_activity.sqlite3` | ActivityService |",
         "",
     ]
 

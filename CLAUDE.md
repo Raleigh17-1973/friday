@@ -154,7 +154,8 @@ python scripts/run_temporal_worker.py
 - `_inject_recalled_context()` is called before planning on every request
 - Both SSE streaming and fallback non-streaming paths must surface `write_actions`
 - `ConversationService.add_message()` auto-creates threads — explicit `create_thread()` is optional
-- `TaskService`, `NotificationService`, `ConversationService` are all SQLite-backed singletons in `FridayService`
+- `TaskService`, `NotificationService`, `ConversationService`, `ActivityService` are all SQLite-backed singletons in `FridayService`
+- `ActivityService` auto-logs task create/update and OKR check-in events; never raises — fire-and-forget
 - The `data/` directory is never committed to git (SQLite files are gitignored)
 
 ---

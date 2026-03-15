@@ -89,6 +89,7 @@ pytest tests/test_phase3.py::test_eval_harness_scores_core_routing -v
 | `packages/workspaces/` | `test_workspaces.py` |
 | `packages/governance/` | `test_smoke.py` (approval gate), `test_audit_store.py` |
 | `packages/qa/` | `test_qa.py` |
+| `packages/activity/` | (no dedicated test yet — verify smoke test passes; add unit test if logic changes) |
 | Any new agent manifest | `test_new_agents.py` (add routing test) |
 
 ---
