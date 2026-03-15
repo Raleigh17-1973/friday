@@ -531,6 +531,19 @@ def create_task(payload: TaskCreate) -> dict:
             )
         except Exception:
             pass
+    # Log to activity feed
+    try:
+        service.activity.log(
+            action="task.created",
+            entity_type="task",
+            entity_id=task.task_id,
+            entity_title=task.title,
+            actor_id=payload.created_by or "system",
+            assignee=task.assignee or "",
+            priority=task.priority,
+        )
+    except Exception:
+        pass
     return task.to_dict()
 
 
@@ -558,6 +571,18 @@ def update_task(task_id: str, payload: TaskUpdate) -> dict:
     task = service.tasks.update(task_id, **changes)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
+    # Log status transitions to activity feed
+    try:
+        action = "task.completed" if task.status == "done" else "task.updated"
+        service.activity.log(
+            action=action,
+            entity_type="task",
+            entity_id=task.task_id,
+            entity_title=task.title,
+            status=task.status,
+        )
+    except Exception:
+        pass
     return task.to_dict()
 
 
@@ -618,6 +643,39 @@ def mark_all_notifications_read(recipient_id: str = "user-1") -> None:
 @app.delete("/notifications/{notification_id}", status_code=204)
 def delete_notification(notification_id: str) -> None:
     service.notifications.delete(notification_id)
+
+
+# ── Activity Log ───────────────────────────────────────────────────────────────
+
+
+@app.get("/activity")
+def list_activity(
+    org_id: str = "org-1",
+    entity_type: Optional[str] = None,
+    action_prefix: Optional[str] = None,
+    limit: int = 50,
+) -> list[dict]:
+    entries = service.activity.list_for_org(
+        org_id=org_id,
+        limit=limit,
+        entity_type=entity_type,
+        action_prefix=action_prefix,
+    )
+    return [e.to_dict() for e in entries]
+
+
+@app.get("/activity/{entity_type}/{entity_id}")
+def list_activity_for_entity(
+    entity_type: str,
+    entity_id: str,
+    limit: int = 50,
+) -> list[dict]:
+    entries = service.activity.list_for_entity(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        limit=limit,
+    )
+    return [e.to_dict() for e in entries]
 
 
 @app.get("/agents")
@@ -1339,6 +1397,20 @@ def okr_checkin(obj_id: str, payload: CheckInCreate) -> dict:
         blockers=payload.blockers,
         next_steps=payload.next_steps,
     )
+    # Log to activity feed
+    try:
+        service.activity.log(
+            action="okr.checkin",
+            entity_type="objective",
+            entity_id=obj_id,
+            entity_title=obj.title,
+            actor_id=payload.author or "system",
+            org_id=obj.org_id,
+            status=payload.status,
+            confidence=payload.confidence,
+        )
+    except Exception:
+        pass
     return asdict(checkin)
 
 

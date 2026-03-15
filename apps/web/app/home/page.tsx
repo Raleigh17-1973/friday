@@ -42,6 +42,17 @@ type Decision = {
   decision_maker: string;
 };
 
+type ActivityEntry = {
+  activity_id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  entity_title: string;
+  actor_id: string;
+  metadata: Record<string, string | number | boolean>;
+  created_at: string;
+};
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function relTime(iso: string): string {
@@ -124,10 +135,12 @@ export default function HomePage() {
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [decisions, setDecisions] = useState<Decision[]>([]);
+  const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(true);
   const [loadingApprovals, setLoadingApprovals] = useState(true);
   const [loadingAlerts, setLoadingAlerts] = useState(true);
   const [loadingDecisions, setLoadingDecisions] = useState(true);
+  const [loadingActivity, setLoadingActivity] = useState(true);
 
   const now = new Date();
   const todayIso = now.toISOString().slice(0, 10);
@@ -169,6 +182,14 @@ export default function HomePage() {
       })
       .catch(() => setDecisions([]))
       .finally(() => setLoadingDecisions(false));
+
+    fetch(`${BACKEND}/activity?org_id=org-1&limit=20`)
+      .then((r) => r.json())
+      .then((data: unknown) => {
+        setActivity(Array.isArray(data) ? (data as ActivityEntry[]) : []);
+      })
+      .catch(() => setActivity([]))
+      .finally(() => setLoadingActivity(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleApprove = async (id: string) => {
@@ -350,6 +371,56 @@ export default function HomePage() {
               </ul>
             )}
           </Section>
+        </div>
+      </div>
+
+      {/* Activity feed */}
+      <div className="card" style={{ marginTop: "0.5rem" }}>
+        <div className="card-header">
+          <span style={{ fontWeight: 600, fontSize: "0.9375rem" }}>Recent Activity</span>
+          {activity.length > 0 && (
+            <span style={{ fontSize: "0.6875rem", fontWeight: 600, padding: "0.125rem 0.4rem", borderRadius: "999px", background: "var(--surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+              {activity.length}
+            </span>
+          )}
+        </div>
+        <div className="card-body">
+          {loadingActivity ? (
+            <div className="loading-skeleton">
+              {[1, 2, 3].map((i) => <div key={i} className="loading-skeleton-row" style={{ height: "2rem" }} />)}
+            </div>
+          ) : activity.length === 0 ? (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.875rem", margin: 0 }}>No activity yet. Create a task or log an OKR check-in to get started.</p>
+          ) : (
+            <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "0" }}>
+              {activity.map((a) => {
+                const icon =
+                  a.action.startsWith("task") ? "✅" :
+                  a.action.startsWith("okr") ? "🎯" :
+                  a.action.startsWith("kr") ? "📊" :
+                  a.action.startsWith("objective") ? "🎯" :
+                  a.action.startsWith("decision") ? "⚖️" :
+                  a.action.startsWith("process") ? "🔄" :
+                  "📌";
+                const label = a.action.replace(".", " ").replace(/_/g, " ");
+                return (
+                  <li key={a.activity_id} style={{ display: "flex", alignItems: "flex-start", gap: "0.625rem", padding: "0.5rem 0", borderBottom: "1px solid var(--border)" }}>
+                    <span style={{ flexShrink: 0, fontSize: "0.875rem", marginTop: "1px" }}>{icon}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ fontSize: "0.875rem", color: "var(--text)", fontWeight: 500 }}>
+                        {a.entity_title || a.entity_id}
+                      </span>
+                      {" "}
+                      <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>— {label}</span>
+                    </div>
+                    <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", flexShrink: 0, whiteSpace: "nowrap" }}>
+                      {relTime(a.created_at)}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       </div>
 

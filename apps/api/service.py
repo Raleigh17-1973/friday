@@ -31,6 +31,7 @@ from packages.voice import VoiceTranscriptionService
 from packages.conversations.service import ConversationService
 from packages.tasks import TaskService
 from packages.notifications import NotificationService
+from packages.activity import ActivityService
 from packages.interpreter import CodeInterpreterService
 from packages.tools.mcp import MCPRegistry
 from packages.tools.policy_wrapped_tools import ToolExecutor
@@ -182,6 +183,10 @@ class FridayService:
         # Notification system
         notifications_db = self.root / "data" / "friday_notifications.sqlite3"
         self.notifications = NotificationService(db_path=notifications_db)
+
+        # Activity log (cross-entity feed)
+        activity_db = self.root / "data" / "friday_activity.sqlite3"
+        self.activity = ActivityService(db_path=activity_db)
 
     def execute_chat_payload(self, payload: dict, upload_store: dict | None = None) -> dict:
         from packages.common.models import ChatRequest
