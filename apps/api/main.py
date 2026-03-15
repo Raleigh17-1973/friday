@@ -1078,6 +1078,8 @@ class DocGenPayload(BaseModel):
     sections: list[dict] = []
     metadata: dict[str, Any] = {}
     org_id: str = "org-1"
+    workspace_id: Optional[str] = None
+    template_id: Optional[str] = None  # if set, use template with variable substitution
 
 
 @app.post("/documents/generate")
@@ -1085,6 +1087,23 @@ def generate_document(payload: DocGenPayload) -> dict:
     if service.docgen is None:
         raise HTTPException(status_code=501, detail="Document generation not available. Install python-docx, python-pptx, openpyxl.")
     from packages.docgen.generators.base import DocumentContent, DocumentSection
+
+    brand = service.brand.get_brand_or_default(payload.org_id).to_dict()
+
+    # Template-based generation
+    if payload.template_id:
+        tpl = service.templates.get(payload.template_id)
+        if tpl is None:
+            raise HTTPException(status_code=404, detail="Template not found")
+        data = {**payload.metadata, "title": payload.title}
+        if payload.sections:
+            data["sections"] = payload.sections
+        stored = service.docgen._generate_from_template_obj(
+            tpl, data, org_id=payload.org_id, brand=brand, workspace_id=payload.workspace_id
+        )
+        return stored.to_dict()
+
+    # Standard generation
     sections = [DocumentSection(**s) for s in payload.sections]
     content = DocumentContent(
         title=payload.title,
@@ -1092,8 +1111,171 @@ def generate_document(payload: DocGenPayload) -> dict:
         sections=sections,
         metadata=payload.metadata,
     )
-    stored = service.docgen.generate(content, format=payload.format, org_id=payload.org_id)
+    stored = service.docgen.generate(
+        content,
+        format=payload.format,
+        brand=brand,
+        org_id=payload.org_id,
+        workspace_id=payload.workspace_id,
+    )
     return stored.to_dict()
+
+
+@app.get("/okrs/{obj_id}/export")
+def export_okr(obj_id: str, format: str = "docx", org_id: str = "org-1") -> dict:
+    """Export a full OKR hierarchy as a branded document. Returns {download_url, file_id, filename}."""
+    if service.docgen is None:
+        raise HTTPException(status_code=501, detail="Document generation not available.")
+    from packages.docgen.generators.base import DocumentContent, DocumentSection
+
+    obj = service.okrs.get_objective(obj_id)
+    if obj is None:
+        raise HTTPException(status_code=404, detail="Objective not found")
+
+    brand = service.brand.get_brand_or_default(org_id).to_dict()
+    krs = service.okrs.list_key_results(obj_id)
+    initiatives = service.okrs.list_initiatives(obj_id)
+
+    sections: list[DocumentSection] = []
+
+    # Overview section
+    overview_lines = [
+        f"**Period:** {obj.period}",
+        f"**Level:** {obj.level}",
+        f"**Status:** {obj.status}",
+        f"**Progress:** {round(obj.progress * 100)}%",
+        f"**Confidence:** {round(obj.confidence_score * 100)}%",
+    ]
+    if obj.description:
+        overview_lines.append(f"\n{obj.description}")
+    sections.append(DocumentSection(heading="Overview", body="\n".join(overview_lines), level=1))
+
+    # Key Results section
+    if krs:
+        kr_table: list[list[str]] = [["Key Result", "Target", "Current", "Progress", "Status"]]
+        for kr in krs:
+            pct = f"{round(kr.progress * 100)}%" if kr.progress is not None else "—"
+            current = str(round(kr.current_value, 2)) if kr.current_value is not None else "—"
+            target = f"{kr.target_value} {kr.unit}" if kr.unit else str(kr.target_value)
+            kr_table.append([kr.title, target, current, pct, kr.status])
+        sections.append(DocumentSection(
+            heading="Key Results",
+            body="",
+            level=1,
+            table=kr_table,
+        ))
+
+    # Initiatives section
+    if initiatives:
+        init_table: list[list[str]] = [["Initiative", "Owner", "Status", "Due Date"]]
+        for ini in initiatives:
+            init_table.append([ini.title, ini.owner or "—", ini.status, ini.due_date or "—"])
+        sections.append(DocumentSection(
+            heading="Initiatives",
+            body="",
+            level=1,
+            table=init_table,
+        ))
+
+    # Child objectives (brief list)
+    children = service.okrs.get_children(obj_id, org_id=obj.org_id)
+    if children:
+        child_body = "\n".join(f"- {c.title} ({round(c.progress * 100)}% · {c.status})" for c in children)
+        sections.append(DocumentSection(heading="Aligned Objectives", body=child_body, level=1))
+
+    doc_type = "deck" if format == "pptx" else "report"
+    content = DocumentContent(
+        title=obj.title,
+        document_type=doc_type,
+        sections=sections,
+        metadata={"author": brand.get("company_name", ""), "org_id": org_id},
+    )
+    stored = service.docgen.generate(
+        content, format=format, brand=brand, org_id=org_id, created_by="friday-export"
+    )
+    return {"file_id": stored.file_id, "filename": stored.filename, "download_url": f"/files/{stored.file_id}"}
+
+
+@app.get("/processes/{process_id}/export")
+def export_process(process_id: str, format: str = "docx", org_id: str = "org-1") -> dict:
+    """Export a process as a branded document. Returns {download_url, file_id, filename}."""
+    if service.docgen is None:
+        raise HTTPException(status_code=501, detail="Document generation not available.")
+    from packages.docgen.generators.base import DocumentContent, DocumentSection
+
+    proc = service.processes.get(process_id)
+    if proc is None:
+        raise HTTPException(status_code=404, detail="Process not found")
+
+    brand = service.brand.get_brand_or_default(org_id).to_dict()
+    sections: list[DocumentSection] = []
+
+    # Overview
+    overview_lines = [
+        f"**Status:** {proc.status}",
+        f"**Version:** {proc.version}",
+        f"**Completeness:** {round(proc.completeness_score * 100)}%",
+        f"**Trigger:** {proc.trigger}",
+    ]
+    if proc.roles:
+        overview_lines.append(f"**Roles:** {', '.join(proc.roles)}")
+    sections.append(DocumentSection(heading="Overview", body="\n".join(overview_lines), level=1))
+
+    # Steps table
+    if proc.steps:
+        steps_table: list[list[str]] = [["#", "Step", "Owner", "SLA"]]
+        for i, step in enumerate(proc.steps, 1):
+            if isinstance(step, dict):
+                name = step.get("name") or step.get("title", "—")
+                owner = step.get("owner", "—")
+                sla = step.get("sla", "—")
+            else:
+                name = getattr(step, "name", str(step))
+                owner = getattr(step, "owner", "—")
+                sla = getattr(step, "sla", "—")
+            steps_table.append([str(i), name, owner, sla])
+        sections.append(DocumentSection(heading="Steps", body="", level=1, table=steps_table))
+
+    # Exceptions
+    if proc.exceptions:
+        exc_lines = []
+        for exc in proc.exceptions:
+            if isinstance(exc, dict):
+                trigger = exc.get("trigger", "")
+                handler = exc.get("handler", "")
+                exc_lines.append(f"- **{trigger}:** {handler}")
+        if exc_lines:
+            sections.append(DocumentSection(heading="Exceptions & Edge Cases", body="\n".join(exc_lines), level=1))
+
+    # Version history
+    try:
+        history = service.processes.get_history(process_id)
+        if history:
+            hist_table: list[list[str]] = [["Version", "Date", "Author", "Changes"]]
+            for entry in history[:10]:  # cap at 10 rows
+                if isinstance(entry, dict):
+                    hist_table.append([
+                        str(entry.get("version", "")),
+                        str(entry.get("date", "")),
+                        str(entry.get("author", "")),
+                        str(entry.get("changes", "")),
+                    ])
+            if len(hist_table) > 1:
+                sections.append(DocumentSection(heading="Version History", body="", level=1, table=hist_table))
+    except Exception:
+        pass
+
+    doc_type = "deck" if format == "pptx" else "sop"
+    content = DocumentContent(
+        title=proc.process_name,
+        document_type=doc_type,
+        sections=sections,
+        metadata={"author": brand.get("company_name", ""), "org_id": org_id},
+    )
+    stored = service.docgen.generate(
+        content, format=format, brand=brand, org_id=org_id, created_by="friday-export"
+    )
+    return {"file_id": stored.file_id, "filename": stored.filename, "download_url": f"/files/{stored.file_id}"}
 
 
 @app.get("/documents")

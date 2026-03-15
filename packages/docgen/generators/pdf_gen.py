@@ -52,9 +52,12 @@ class PdfGenerator(DocumentGenerator):
         return "pdf"
 
     def generate(
-        self, content: DocumentContent, template_path: str | None = None
+        self,
+        content: DocumentContent,
+        template_path: str | None = None,
+        brand: dict | None = None,
     ) -> bytes:
-        html = self._build_html(content)
+        html = self._build_html(content, brand=brand or {})
 
         try:
             from weasyprint import HTML  # type: ignore[import-untyped]
@@ -69,19 +72,26 @@ class PdfGenerator(DocumentGenerator):
             return html.encode("utf-8")
 
     # ------------------------------------------------------------------
-    def _build_html(self, content: DocumentContent) -> str:
+    def _build_html(self, content: DocumentContent, brand: dict | None = None) -> str:
+        brand = brand or {}
+        primary_color = brand.get("primary_color", "#4472C4")
+        company_name = brand.get("company_name", "")
+        # Inject brand color into CSS (replace default header bg color)
+        css = _CSS.replace("background-color: #4472C4;", f"background-color: {primary_color};")
+        css = css.replace("border-bottom: 2px solid #333;", f"border-bottom: 2px solid {primary_color};")
+
         parts: list[str] = [
             "<!DOCTYPE html>",
             "<html><head>",
             "<meta charset='utf-8'>",
             f"<title>{escape(content.title)}</title>",
-            f"<style>{_CSS}</style>",
+            f"<style>{css}</style>",
             "</head><body>",
             f"<h1>{escape(content.title)}</h1>",
         ]
 
         # Metadata
-        author = content.metadata.get("author", "")
+        author = content.metadata.get("author", company_name)
         date = content.metadata.get("date", "")
         if author or date:
             meta_parts = []

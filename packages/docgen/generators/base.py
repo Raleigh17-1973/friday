@@ -29,9 +29,19 @@ class DocumentGenerator(ABC):
 
     @abstractmethod
     def generate(
-        self, content: DocumentContent, template_path: str | None = None
+        self,
+        content: DocumentContent,
+        template_path: str | None = None,
+        brand: dict | None = None,
     ) -> bytes:
-        """Generate document bytes from structured content."""
+        """Generate document bytes from structured content.
+
+        Args:
+            content: Document structure and text.
+            template_path: Optional path to a binary template file (docx/pptx).
+            brand: Optional brand dict with keys: company_name, primary_color,
+                   secondary_color, accent_color, font_family, tagline.
+        """
         ...
 
     @property

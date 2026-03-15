@@ -63,6 +63,7 @@ export default function ProcessDetailPage() {
   const [tab, setTab] = useState<TabId>("overview");
   const [diagramTab, setDiagramTab] = useState<DiagramTab>("flowchart");
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     if (!processId) return;
@@ -88,6 +89,21 @@ export default function ProcessDetailPage() {
   const activeDiagram = diagramTab === "flowchart" ? doc.mermaid_flowchart : doc.mermaid_swimlane;
   const completeness = Math.round(doc.completeness_score * 100);
 
+  async function handleExport() {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const res = await fetch(`${BACKEND}/processes/${processId}/export?format=docx&org_id=org-1`);
+      if (!res.ok) throw new Error("Export failed");
+      const data = await res.json() as { download_url: string; filename: string };
+      window.open(`${BACKEND}${data.download_url}`, "_blank", "noopener,noreferrer");
+    } catch {
+      // swallow
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <main className="process-detail">
       {/* ── Header ── */}
@@ -102,6 +118,14 @@ export default function ProcessDetailPage() {
           </div>
         </div>
         <div className="detail-header-actions">
+          <button
+            className="edit-btn"
+            onClick={handleExport}
+            disabled={exporting}
+            style={{ cursor: exporting ? "wait" : "pointer" }}
+          >
+            {exporting ? "Exporting…" : "↓ Export SOP"}
+          </button>
           <Link href={`/?prefill=Help+me+refine+the+${encodeURIComponent(doc.process_name)}+process`} className="edit-btn">
             ✏ Refine in Chat
           </Link>

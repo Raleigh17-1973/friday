@@ -5,9 +5,18 @@ import io
 import re
 
 from docx import Document
-from docx.shared import Pt
+from docx.shared import RGBColor
 
 from packages.docgen.generators.base import DocumentContent, DocumentGenerator, DocumentSection
+
+
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    """Parse '#rrggbb' into (r, g, b) ints, falling back to default blue on error."""
+    try:
+        h = hex_color.lstrip("#")
+        return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    except Exception:
+        return 15, 92, 192  # default #0f5cc0
 
 
 class DocxGenerator(DocumentGenerator):
@@ -22,35 +31,51 @@ class DocxGenerator(DocumentGenerator):
         return "docx"
 
     def generate(
-        self, content: DocumentContent, template_path: str | None = None
+        self,
+        content: DocumentContent,
+        template_path: str | None = None,
+        brand: dict | None = None,
     ) -> bytes:
         doc = Document(template_path) if template_path else Document()
 
-        # Title
-        doc.add_heading(content.title, level=0)
+        brand = brand or {}
+        primary_color = brand.get("primary_color", "#0f5cc0")
+        company_name = brand.get("company_name", "")
+        r, g, b = _hex_to_rgb(primary_color)
+        brand_rgb = RGBColor(r, g, b)
 
-        # Metadata line
-        author = content.metadata.get("author", "")
+        # Title — apply brand primary color
+        title_para = doc.add_heading(content.title, level=0)
+        for run in title_para.runs:
+            run.font.color.rgb = brand_rgb
+
+        # Metadata line: author / date / company
+        author = content.metadata.get("author", company_name)
         date = content.metadata.get("date", "")
-        if author or date:
-            meta_parts = []
-            if author:
-                meta_parts.append(f"Author: {author}")
-            if date:
-                meta_parts.append(f"Date: {date}")
+        meta_parts: list[str] = []
+        if author:
+            label = "Prepared by" if (company_name and author == company_name) else "Author:"
+            meta_parts.append(f"{label} {author}")
+        if date:
+            meta_parts.append(f"Date: {date}")
+        if meta_parts:
             doc.add_paragraph(" | ".join(meta_parts)).style = "Subtitle"
 
         for section in content.sections:
-            self._add_section(doc, section)
+            self._add_section(doc, section, brand_rgb)
 
         buf = io.BytesIO()
         doc.save(buf)
         return buf.getvalue()
 
     # ------------------------------------------------------------------
-    def _add_section(self, doc: Document, section: DocumentSection) -> None:
+    def _add_section(self, doc: Document, section: DocumentSection, brand_rgb: RGBColor | None = None) -> None:
         heading_level = min(max(section.level, 1), 9)
-        doc.add_heading(section.heading, level=heading_level)
+        heading_para = doc.add_heading(section.heading, level=heading_level)
+        # Apply brand color to level-1 headings
+        if heading_level == 1 and brand_rgb is not None:
+            for run in heading_para.runs:
+                run.font.color.rgb = brand_rgb
 
         # Parse body with simple markdown support
         self._add_markdown_body(doc, section.body)
@@ -58,6 +83,7 @@ class DocxGenerator(DocumentGenerator):
         # Table
         if section.table:
             self._add_table(doc, section.table)
+
 
     def _add_markdown_body(self, doc: Document, body: str) -> None:
         if not body:

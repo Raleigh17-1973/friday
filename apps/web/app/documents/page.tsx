@@ -58,6 +58,7 @@ export default function DocumentsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([]);
   const [workspaceFilter, setWorkspaceFilter] = useState<string>("all");
+  const [previewDoc, setPreviewDoc] = useState<DocumentItem | null>(null);
 
   useEffect(() => {
     fetch(`${BACKEND}/documents`)
@@ -233,6 +234,16 @@ export default function DocumentsPage() {
                     <span>{new Date(doc.created_at).toLocaleDateString()}</span>
                   </span>
                 </div>
+                  {format === "pdf" && (
+                  <button
+                    className="docs-download-btn"
+                    style={{ marginRight: "0.25rem" }}
+                    onClick={(e) => { e.stopPropagation(); setPreviewDoc(doc); }}
+                    aria-label={`Preview ${doc.filename}`}
+                  >
+                    Preview
+                  </button>
+                )}
                 <button
                   className="docs-download-btn"
                   onClick={() =>
@@ -248,6 +259,74 @@ export default function DocumentsPage() {
         </ul>
       )}
     </div>
+
+    {/* PDF Preview Drawer */}
+    {previewDoc && (
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(0,0,0,0.55)",
+          zIndex: 1000,
+          display: "flex",
+          alignItems: "stretch",
+          justifyContent: "flex-end",
+        }}
+        onClick={() => setPreviewDoc(null)}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Preview ${previewDoc.filename}`}
+      >
+        <div
+          style={{
+            width: "min(860px, 92vw)",
+            background: "var(--surface)",
+            display: "flex",
+            flexDirection: "column",
+            boxShadow: "-4px 0 24px rgba(0,0,0,0.2)",
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Drawer header */}
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "0.875rem 1.25rem",
+            borderBottom: "1px solid var(--line)",
+            flexShrink: 0,
+          }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: "0.9375rem" }}>{previewDoc.filename}</div>
+              <div style={{ fontSize: "0.8125rem", color: "var(--text-muted)", marginTop: "0.125rem" }}>
+                {formatBytes(previewDoc.size_bytes)} · {new Date(previewDoc.created_at).toLocaleDateString()}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => window.open(`${BACKEND}/files/${previewDoc.file_id}`, "_blank", "noopener,noreferrer")}
+              >
+                Download
+              </button>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => setPreviewDoc(null)}
+                aria-label="Close preview"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          {/* iframe */}
+          <iframe
+            src={`${BACKEND}/files/${previewDoc.file_id}`}
+            title={previewDoc.filename}
+            style={{ flex: 1, border: "none", background: "#fff" }}
+          />
+        </div>
+      </div>
+    )}
     </PageShell>
   );
 }

@@ -537,6 +537,7 @@ export default function OKRDetailPage() {
   const [editingInit, setEditingInit] = useState<string | null>(null);
   const [showAddCheckIn, setShowAddCheckIn] = useState(false);
   const [showAllCheckIns, setShowAllCheckIns] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // Fetch available KPIs for the link-to-KPI select
   useEffect(() => {
@@ -578,6 +579,21 @@ export default function OKRDetailPage() {
 
   useEffect(() => { load(); }, [id]);
 
+  async function handleExport(format: "docx" | "pptx" = "docx") {
+    if (!obj || exporting) return;
+    setExporting(true);
+    try {
+      const res = await fetch(`${API}/okrs/${obj.obj_id}/export?format=${format}&org_id=org-1`);
+      if (!res.ok) throw new Error("Export failed");
+      const data = await res.json() as { download_url: string; filename: string };
+      window.open(`${API}${data.download_url}`, "_blank", "noopener,noreferrer");
+    } catch {
+      // swallow — user sees nothing happen, which is acceptable for an export action
+    } finally {
+      setExporting(false);
+    }
+  }
+
   if (loading) {
     return (
       <PageShell title="Loading…" breadcrumbs={[{ label: "OKRs", href: "/okrs" }, { label: "…" }]}>
@@ -616,12 +632,22 @@ export default function OKRDetailPage() {
       breadcrumbs={[{ label: "OKRs", href: "/okrs" }, { label: obj.title }]}
       subtitle={`${obj.period} · ${obj.level} objective`}
       headerActions={
-        <button
-          className="btn btn-secondary btn-sm"
-          onClick={() => { setEditingObj(true); }}
-        >
-          ✏️ Edit Objective
-        </button>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => handleExport("docx")}
+            disabled={exporting}
+            title="Export as Word document"
+          >
+            {exporting ? "Exporting…" : "↓ Export"}
+          </button>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => { setEditingObj(true); }}
+          >
+            ✏️ Edit Objective
+          </button>
+        </div>
       }
     >
       <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>

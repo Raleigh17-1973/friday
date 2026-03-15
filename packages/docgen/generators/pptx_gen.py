@@ -21,16 +21,22 @@ class PptxGenerator(DocumentGenerator):
         return "pptx"
 
     def generate(
-        self, content: DocumentContent, template_path: str | None = None
+        self,
+        content: DocumentContent,
+        template_path: str | None = None,
+        brand: dict | None = None,
     ) -> bytes:
         prs = Presentation(template_path) if template_path else Presentation()
+
+        brand = brand or {}
+        company_name = brand.get("company_name", "")
 
         # Title slide
         title_layout = prs.slide_layouts[0]  # Title Slide layout
         slide = prs.slides.add_slide(title_layout)
         slide.shapes.title.text = content.title
         if slide.placeholders[1]:
-            author = content.metadata.get("author", "")
+            author = content.metadata.get("author", company_name)
             slide.placeholders[1].text = author
 
         # Content slides
