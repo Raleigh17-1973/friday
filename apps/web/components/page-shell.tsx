@@ -6,6 +6,7 @@ import {
   BarChart2,
   Bell,
   CheckSquare,
+  ClipboardCheck,
   FileText,
   Folders,
   Home,
@@ -35,10 +36,11 @@ type NavItem = {
 };
 
 const NAV_ITEMS: NavItem[] = [
-  { href: "/home",       icon: Home,          label: "Home"           },
-  { href: "/",           icon: MessageSquare, label: "Chat"           },
-  { href: "/tasks",      icon: CheckSquare,   label: "Tasks"          },
-  { href: "/processes",  icon: Workflow,      label: "Process Library" },
+  { href: "/home",       icon: Home,           label: "Home"           },
+  { href: "/",           icon: MessageSquare,  label: "Chat"           },
+  { href: "/tasks",      icon: CheckSquare,    label: "Tasks"          },
+  { href: "/approvals",  icon: ClipboardCheck, label: "Approvals"      },
+  { href: "/processes",  icon: Workflow,       label: "Process Library" },
   { href: "/documents",  icon: FileText,      label: "Documents"       },
   { href: "/analytics",  icon: BarChart2,     label: "Analytics"       },
   { href: "/okrs",       icon: Target,        label: "OKRs"            },

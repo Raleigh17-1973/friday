@@ -7,6 +7,7 @@ import {
   Bell,
   CheckSquare,
   ChevronDown,
+  ClipboardCheck,
   FileText,
   FlaskConical,
   Folders,
@@ -83,6 +84,7 @@ type NavItem = {
 const NAV_ITEMS: NavItem[] = [
   { label: "Home",            href: "/home",       icon: Home          },
   { label: "Tasks",           href: "/tasks",      icon: CheckSquare   },
+  { label: "Approvals",       href: "/approvals",  icon: ClipboardCheck },
   { label: "Process Library", href: "/processes",  icon: Workflow      },
   { label: "Documents",       href: "/documents",  icon: FileText      },
   { label: "Analytics",       href: "/analytics",  icon: BarChart2     },

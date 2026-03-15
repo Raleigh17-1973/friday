@@ -397,6 +397,13 @@ def approve(approval_id: str) -> dict:
         req = service.approvals.approve(approval_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="approval not found") from exc
+    try:
+        service.activity.log(
+            action="generic", entity_type="approval", entity_id=approval_id,
+            entity_title=req.action_summary[:80], actor_id="user-1", decision="approved",
+        )
+    except Exception:
+        pass
     return asdict(req)
 
 
@@ -406,7 +413,50 @@ def reject(approval_id: str) -> dict:
         req = service.approvals.reject(approval_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="approval not found") from exc
+    try:
+        service.activity.log(
+            action="generic", entity_type="approval", entity_id=approval_id,
+            entity_title=req.action_summary[:80], actor_id="user-1", decision="rejected",
+        )
+    except Exception:
+        pass
     return asdict(req)
+
+
+@app.get("/approvals/{approval_id}")
+def get_approval(approval_id: str) -> dict:
+    try:
+        req = service.approvals.get(approval_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="approval not found") from exc
+    return asdict(req)
+
+
+class BulkDecidePayload(BaseModel):
+    approval_ids: list[str]
+    decision: str   # "approve" | "reject"
+
+
+@app.post("/approvals/bulk-decide", status_code=200)
+def bulk_decide(payload: BulkDecidePayload) -> dict:
+    if payload.decision not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="decision must be 'approve' or 'reject'")
+    results: list[dict] = []
+    for aid in payload.approval_ids:
+        try:
+            req = service.approvals.approve(aid) if payload.decision == "approve" else service.approvals.reject(aid)
+            results.append({"approval_id": aid, "status": req.status})
+            try:
+                service.activity.log(
+                    action="generic", entity_type="approval", entity_id=aid,
+                    entity_title=req.action_summary[:80], actor_id="user-1",
+                    decision=payload.decision + "d", bulk=True,
+                )
+            except Exception:
+                pass
+        except KeyError:
+            results.append({"approval_id": aid, "error": "not found"})
+    return {"processed": len(results), "results": results}
 
 
 @app.get("/memories")
