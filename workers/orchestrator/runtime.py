@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from pathlib import Path
@@ -8,6 +9,10 @@ from typing import TYPE_CHECKING, Iterator
 from uuid import uuid4
 
 _log = logging.getLogger(__name__)
+
+# PR-12: Hard cap on parallel specialist threads to prevent thread exhaustion under load.
+# Operators can raise this via env var; default of 6 covers the vast majority of real queries.
+_MAX_PARALLEL_SPECIALISTS: int = int(os.getenv("FRIDAY_MAX_PARALLEL_SPECIALISTS", "6"))
 
 from packages.agents.registry import AgentRegistry
 from packages.common.models import (
@@ -334,39 +339,6 @@ class FridayManager:
         final_answer = synthesize(plan, memos, critic_report, llm=self._llm)
         validate_required_fields(final_answer, FINAL_ANSWER_PACKAGE_SCHEMA, "FinalAnswerPackage")
 
-        # Phase 2b-write: execute tool_requests declared by specialists
-        write_actions: list[dict] = []
-        for memo in memos:
-            for req in getattr(memo, "tool_requests", []):
-                tool_name = req.get("tool", "")
-                req_args = req.get("args", {})
-                if not tool_name:
-                    continue
-                try:
-                    result = self._tool_executor.run(tool_name, req_args)
-                    write_actions.append({
-                        "tool": tool_name,
-                        "args": req_args,
-                        "specialist": memo.specialist_id,
-                        "ok": result.ok,
-                        "output": result.output,
-                        "error": result.error,
-                    })
-                    if result.ok:
-                        _log.info("Write action %s succeeded: %s", tool_name, result.output)
-                    else:
-                        _log.warning("Write action %s failed: %s", tool_name, result.error)
-                except Exception as exc:
-                    _log.warning("Write action %s raised: %s", tool_name, exc)
-                    write_actions.append({
-                        "tool": tool_name,
-                        "args": req_args,
-                        "specialist": memo.specialist_id,
-                        "ok": False,
-                        "output": {},
-                        "error": str(exc),
-                    })
-
         # Phase 2b: iterative refinement — if confidence is low and LLM is available,
         # run a second synthesis pass with the critic's objections injected more forcefully
         if (
@@ -384,7 +356,21 @@ class FridayManager:
                 final_answer = refined
                 validate_required_fields(final_answer, FINAL_ANSWER_PACKAGE_SCHEMA, "FinalAnswerPackage")
 
+        # PR-02: Collect all write tool requests from specialist memos and evaluate
+        # policy BEFORE executing any of them.  If approval is required the pending
+        # write plan is stored in the trace and execution is skipped — the approval
+        # endpoint will resume execution once the human grants it.
+        _all_tool_reqs: list[tuple[str, str, dict]] = [  # (tool_name, specialist_id, args)
+            (req.get("tool", ""), memo.specialist_id, req.get("args", {}))
+            for memo in memos
+            for req in getattr(memo, "tool_requests", [])
+            if req.get("tool", "")
+        ]
         requested_scopes = list(request.context_packet.get("requested_write_scopes", []))
+        # Promote to WRITE mode if any tool request exists (specialists only emit
+        # tool_requests for write operations).
+        if _all_tool_reqs and not requested_scopes:
+            requested_scopes = [t[0] for t in _all_tool_reqs]
         action_mode = ActionMode.WRITE if requested_scopes else ActionMode.READ_ONLY
         policy = self._policy.evaluate(
             action_mode=action_mode,
@@ -404,6 +390,47 @@ class FridayManager:
                 )
             )
 
+        # Phase 2b-write: only execute if policy cleared (no approval required).
+        write_actions: list[dict] = []
+        if not policy.requires_approval:
+            for tool_name, specialist_id, req_args in _all_tool_reqs:
+                try:
+                    result = self._tool_executor.run(tool_name, req_args)
+                    write_actions.append({
+                        "tool": tool_name,
+                        "args": req_args,
+                        "specialist": specialist_id,
+                        "ok": result.ok,
+                        "output": result.output,
+                        "error": result.error,
+                    })
+                    if result.ok:
+                        _log.info("Write action %s succeeded: %s", tool_name, result.output)
+                    else:
+                        _log.warning("Write action %s failed: %s", tool_name, result.error)
+                except Exception as exc:
+                    _log.warning("Write action %s raised: %s", tool_name, exc)
+                    write_actions.append({
+                        "tool": tool_name,
+                        "args": req_args,
+                        "specialist": specialist_id,
+                        "ok": False,
+                        "output": {},
+                        "error": str(exc),
+                    })
+        elif _all_tool_reqs:
+            _log.info(
+                "Approval required for %d write tool(s) on run %s — execution deferred",
+                len(_all_tool_reqs),
+                run_id,
+            )
+
+        # PR-08: if approval was required, persist the pending write plan so the
+        # /approvals/{id}/execute endpoint can resume execution after the human approves.
+        _pending_plan = (
+            [{"tool": t, "specialist": s, "args": a} for t, s, a in _all_tool_reqs]
+            if policy.requires_approval else []
+        )
         trace = RunTrace(
             run_id=run_id,
             org_id=request.org_id,
@@ -418,6 +445,7 @@ class FridayManager:
             confidence=final_answer.confidence or 0.0,
             feedback={},
             outcome={"approval_required": bool(approval)},
+            pending_write_plan=_pending_plan,
         )
         self._audit.record_run(trace)
 
@@ -573,20 +601,31 @@ class FridayManager:
                 confidence=0.85 if self._llm else 0.55,
             )
 
-            # Execute tool_requests from specialist memos (streaming path)
+            # PR-02 (streaming path): evaluate policy BEFORE executing write tools.
+            _stream_tool_reqs: list[tuple[str, str, dict]] = [
+                (req.get("tool", ""), memo.specialist_id, req.get("args", {}))
+                for memo in memos
+                for req in getattr(memo, "tool_requests", [])
+                if req.get("tool", "")
+            ]
+            _stream_scopes = list(request.context_packet.get("requested_write_scopes", []))
+            if _stream_tool_reqs and not _stream_scopes:
+                _stream_scopes = [t[0] for t in _stream_tool_reqs]
+            _stream_action_mode = ActionMode.WRITE if _stream_scopes else ActionMode.READ_ONLY
+            _stream_policy = self._policy.evaluate(
+                action_mode=_stream_action_mode,
+                requested_scopes=_stream_scopes,
+                risk_level=plan.risk_level,
+            )
             stream_write_actions: list[dict] = []
-            for memo in memos:
-                for req in getattr(memo, "tool_requests", []):
-                    tool_name = req.get("tool", "")
-                    req_args = req.get("args", {})
-                    if not tool_name:
-                        continue
+            if not _stream_policy.requires_approval:
+                for tool_name, specialist_id, req_args in _stream_tool_reqs:
                     try:
                         result = self._tool_executor.run(tool_name, req_args)
                         stream_write_actions.append({
                             "tool": tool_name,
                             "args": req_args,
-                            "specialist": memo.specialist_id,
+                            "specialist": specialist_id,
                             "ok": result.ok,
                             "output": result.output,
                             "error": result.error,
@@ -596,11 +635,16 @@ class FridayManager:
                         stream_write_actions.append({
                             "tool": tool_name,
                             "args": req_args,
-                            "specialist": memo.specialist_id,
+                            "specialist": specialist_id,
                             "ok": False,
                             "output": {},
                             "error": str(exc),
                         })
+            elif _stream_tool_reqs:
+                _log.info(
+                    "Streaming: approval required for %d write tool(s) — deferred",
+                    len(_stream_tool_reqs),
+                )
 
             # Persist the run trace to the audit log so GET /runs/{run_id} can serve it
             stream_trace = RunTrace(
@@ -659,7 +703,9 @@ class FridayManager:
             return [specialists[0].run(plan=plan, user_message=user_message, tot_mode=tot_mode)]
         memos = [None] * len(specialists)
         try:
-            with ThreadPoolExecutor(max_workers=len(specialists)) as pool:
+            # PR-12: Cap workers to avoid thread exhaustion; never exceed specialist count.
+            _workers = min(len(specialists), _MAX_PARALLEL_SPECIALISTS)
+            with ThreadPoolExecutor(max_workers=_workers) as pool:
                 future_to_idx = {
                     pool.submit(s.run, plan=plan, user_message=user_message, tot_mode=tot_mode): i
                     for i, s in enumerate(specialists)
@@ -704,6 +750,64 @@ class FridayManager:
             "Feedback recorded for run %s: approved=%s specialists=%s",
             run_id, approved, trace.selected_agents,
         )
+
+    def execute_pending_write_plan(self, approval_id: str) -> list[dict]:
+        """PR-08: Execute the deferred write plan attached to an approved ApprovalRequest.
+
+        Looks up the ApprovalRequest by approval_id, verifies it is approved, loads the
+        RunTrace to retrieve the pending_write_plan, runs each tool call, appends an audit
+        entry, and returns the list of write_action dicts.
+        """
+        try:
+            req = self._approvals.get(approval_id)
+        except KeyError as exc:
+            raise KeyError(f"approval {approval_id!r} not found") from exc
+
+        if req.status != "approved":
+            raise ValueError(f"approval {approval_id!r} is not approved (status={req.status!r})")
+
+        trace = self._audit.get_run(req.run_id)
+        if trace is None:
+            raise KeyError(f"run {req.run_id!r} not found in audit log")
+
+        if not trace.pending_write_plan:
+            return []  # nothing to execute (already ran or plan was empty)
+
+        executed: list[dict] = []
+        for item in trace.pending_write_plan:
+            tool_name = item.get("tool", "")
+            req_args = item.get("args", {})
+            specialist_id = item.get("specialist", "")
+            if not tool_name:
+                continue
+            try:
+                result = self._tool_executor.run(tool_name, req_args)
+                executed.append({
+                    "tool": tool_name,
+                    "args": req_args,
+                    "specialist": specialist_id,
+                    "ok": result.ok,
+                    "output": result.output,
+                    "error": result.error,
+                })
+                _log.info("Resume write action %s ok=%s", tool_name, result.ok)
+            except Exception as exc:
+                _log.warning("Resume write action %s raised: %s", tool_name, exc)
+                executed.append({
+                    "tool": tool_name,
+                    "args": req_args,
+                    "specialist": specialist_id,
+                    "ok": False,
+                    "output": {},
+                    "error": str(exc),
+                })
+
+        # Clear the pending plan in the audit log so it can't be replayed.
+        trace.pending_write_plan.clear()
+        trace.outcome["write_executed_after_approval"] = True
+        self._audit.record_run(trace)
+
+        return executed
 
     def _get_approved_hints(self, episodic: list[dict]) -> list[str]:
         """Extract approved-pattern hints from episodic memory to bias the planner."""
