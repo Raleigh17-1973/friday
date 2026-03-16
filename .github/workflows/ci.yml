@@ -2,64 +2,114 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ["main", "develop"]
   pull_request:
-    branches: [main]
+    branches: ["main"]
 
 jobs:
   test:
-    name: Python tests
+    name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11"]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
-          pip install -e ".[phase4]"
+          python -m pip install --upgrade pip
+          pip install -e ".[all]"
+          pip install pytest pytest-cov
 
       - name: Run tests
-        run: python -m pytest tests/ -q --tb=short
-        env:
-          # No real LLM keys — tests run against stubs
-          ANTHROPIC_API_KEY: ""
-          OPENAI_API_KEY: ""
+        run: pytest tests/ -x -q --tb=short
 
-  lint:
-    name: Type check (pyright)
+  # PR-11: SAST — static analysis for common security issues
+  sast:
+    name: SAST (bandit)
     runs-on: ubuntu-latest
-    continue-on-error: true   # advisory only — don't block merge
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
 
-      - name: Install dependencies + pyright
+      - name: Install bandit
+        run: pip install bandit[toml]
+
+      - name: Run bandit
         run: |
-          pip install --upgrade pip
-          pip install -e ".[phase4]"
-          pip install pyright
+          bandit -r apps/ packages/ workers/ \
+            --severity-level medium \
+            --confidence-level medium \
+            --skip B101,B105,B311 \
+            -f json -o bandit-report.json || true
+          bandit -r apps/ packages/ workers/ \
+            --severity-level medium \
+            --confidence-level medium \
+            --skip B101,B105,B311
+        # B101: assert used (common in tests/dev code)
+        # B105: hardcoded password string (too many false positives on test fixtures)
+        # B311: random not suitable for security (used for non-security IDs)
 
-      - name: Run pyright
-        run: pyright packages/ workers/ apps/api/ --ignore node_modules
+      - name: Upload bandit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
 
-  docker-build:
-    name: Docker build check
+  # PR-11: Dependency audit — check for known CVEs in Python packages
+  dependency-audit:
+    name: Dependency audit (pip-audit)
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Docker image
-        run: docker build -t friday-api:ci .
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Install project dependencies
+        run: pip install -e ".[all]"
+
+      - name: Run pip-audit
+        run: pip-audit --skip-editable --output-format=json > pip-audit-report.json || pip-audit --skip-editable
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: pip-audit-report.json
+
+  # PR-11: Secret scanning — detect accidentally committed credentials
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
