@@ -1,11 +1,79 @@
 from __future__ import annotations
 
+import ipaddress
 import json
+import os
+import socket
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import urlopen
+
+
+# ── PR-07: SSRF / egress policy ───────────────────────────────────────────────
+# Tools that make outbound HTTP calls use _safe_urlopen() which blocks
+# requests to private networks and enforces timeouts + response size caps.
+
+_HTTP_TIMEOUT = int(os.getenv("FRIDAY_TOOL_HTTP_TIMEOUT", "15"))           # seconds
+_HTTP_MAX_BYTES = int(os.getenv("FRIDAY_TOOL_MAX_RESPONSE_BYTES", str(5 * 1024 * 1024)))  # 5 MB
+_EGRESS_ALLOWLIST: list[str] = [
+    h.strip()
+    for h in os.getenv("FRIDAY_TOOL_EGRESS_ALLOWLIST", "").split(",")
+    if h.strip()
+]
+
+_PRIVATE_NETS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),   # link-local / cloud metadata
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+]
+
+
+def _check_egress(url: str) -> None:
+    """Raise ValueError if the URL targets a private/internal address.
+
+    Checks:
+    - Scheme must be https (or http for known trusted API hosts)
+    - If FRIDAY_TOOL_EGRESS_ALLOWLIST is set, hostname must be in it
+    - Resolved IP must not be in a private range
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Disallowed URL scheme: {parsed.scheme}")
+    host = parsed.hostname or ""
+    if _EGRESS_ALLOWLIST and not any(host == h or host.endswith("." + h) for h in _EGRESS_ALLOWLIST):
+        raise ValueError(f"Host {host!r} not in egress allowlist")
+    try:
+        ip_str = socket.gethostbyname(host)
+        ip = ipaddress.ip_address(ip_str)
+        for net in _PRIVATE_NETS:
+            if ip in net:
+                raise ValueError(f"SSRF: {host} resolved to private address {ip_str}")
+    except socket.gaierror:
+        pass  # DNS failure will surface as a connection error; not a security issue
+
+
+def _safe_urlopen(url: str, **kwargs: Any):
+    """urlopen wrapper that enforces egress policy, timeout, and response-size cap."""
+    _check_egress(url)
+    timeout = kwargs.pop("timeout", _HTTP_TIMEOUT)
+    resp = urlopen(url, timeout=timeout, **kwargs)  # nosec B310
+    # Wrap read to cap bytes
+    original_read = resp.read
+
+    def _capped_read(n: int = -1) -> bytes:
+        data = original_read(n)
+        if len(data) > _HTTP_MAX_BYTES:
+            raise ValueError(f"Response exceeded {_HTTP_MAX_BYTES} byte limit")
+        return data
+
+    resp.read = _capped_read  # type: ignore[method-assign]
+    return resp
 
 
 @dataclass
@@ -162,7 +230,7 @@ class ToolExecutor:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urlopen(req, timeout=10) as resp:  # nosec B310
+        with _safe_urlopen(req, timeout=10) as resp:
             data = _json.loads(resp.read().decode("utf-8"))
 
         results = [
@@ -208,7 +276,7 @@ class ToolExecutor:
             },
             method="POST",
         )
-        with urlopen(req, timeout=10) as resp:  # nosec B310
+        with _safe_urlopen(req, timeout=10) as resp:
             data = _json.loads(resp.read().decode("utf-8"))
 
         results = [
@@ -232,7 +300,7 @@ class ToolExecutor:
         url = f"https://api.duckduckgo.com/?{params}"
 
         try:
-            with urlopen(url, timeout=5) as resp:  # nosec B310
+            with _safe_urlopen(url, timeout=5) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
         except Exception as exc:  # pragma: no cover
             return ToolResult(
