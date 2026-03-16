@@ -286,6 +286,21 @@ class FridayService:
         if trace is not None:
             response["reflection"] = self.reflection.reflect(trace, self.memory).to_dict()
 
+        # Phase 6: Notify when an approval request is created
+        approval = response.get("approval")
+        if approval and isinstance(approval, dict):
+            try:
+                self.notifications.create(
+                    recipient_id=request.user_id,
+                    type="approval_required",
+                    title="Approval required",
+                    body=str(approval.get("action_summary", "Friday needs your approval to proceed."))[:200],
+                    entity_type="approval",
+                    entity_id=str(approval.get("approval_id", "")),
+                )
+            except Exception:
+                pass
+
         # Doc generation hook
         self._maybe_generate_document(request.message, request.org_id, response)
 

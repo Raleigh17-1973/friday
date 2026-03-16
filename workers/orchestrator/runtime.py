@@ -865,9 +865,11 @@ class FridayManager:
                 hints_text = "\n".join(f"- {h}" for h in approved_hints)
                 parts.append(f"Prior approved patterns (use these specialist combinations for similar requests):\n{hints_text}")
 
-        # 2. Semantic recall from vector store
+        # 2. Semantic recall from vector store (Phase 13: workspace-scoped when available)
         try:
-            recalled = self._memory.semantic_recall(org_id=org_id, query=query, top_k=3)
+            recalled = self._memory.semantic_recall(
+                org_id=org_id, query=query, top_k=3, workspace_id=workspace_id
+            )
             if recalled:
                 useful = [r for r in recalled if r.get("similarity", 1.0) == 0.0 or r.get("similarity", 0) > 0.55]
                 if useful:

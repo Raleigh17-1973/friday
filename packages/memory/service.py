@@ -197,13 +197,17 @@ class LayeredMemoryService:
     # ------------------------------------------------------------------
 
     def semantic_recall(
-        self, org_id: str, query: str, top_k: int = 5
+        self, org_id: str, query: str, top_k: int = 5,
+        workspace_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return top-k semantically similar memories for the given query.
 
         Uses pgvector cosine similarity when Postgres is configured.
         Falls back to keyword matching on episodic history for SQLite.
         Returns an empty list when no relevant prior context exists.
+
+        Phase 13: When workspace_id is provided, results from the same workspace
+        are preferred — workspace-scoped entries are returned first.
         """
         if self._repository is None:
             return []
@@ -217,6 +221,11 @@ class LayeredMemoryService:
                     _log.debug(
                         "semantic_recall: %d vector hits for org=%s", len(results), org_id
                     )
+                    if workspace_id:
+                        # Boost workspace-scoped entries to the top
+                        ws_hits = [r for r in results if r.get("workspace_id") == workspace_id]
+                        other_hits = [r for r in results if r.get("workspace_id") != workspace_id]
+                        results = (ws_hits + other_hits)[:top_k]
                     return results
             except Exception as exc:
                 _log.debug("semantic_recall vector search failed (%s), using keyword fallback", exc)
@@ -229,10 +238,15 @@ class LayeredMemoryService:
                 "content_key": f"episode_{i}",
                 "content_text": str(ep),
                 "similarity": 0.0,
+                "workspace_id": ep.get("workspace_id") if isinstance(ep, dict) else None,
             }
             for i, ep in enumerate(episodes)
             if query_lower in str(ep).lower()
         ]
+        if workspace_id:
+            ws_hits = [h for h in hits if h.get("workspace_id") == workspace_id]
+            other_hits = [h for h in hits if h.get("workspace_id") != workspace_id]
+            hits = ws_hits + other_hits
         return hits[:top_k]
 
     # ------------------------------------------------------------------

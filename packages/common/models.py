@@ -161,6 +161,8 @@ class ApprovalRequest:
     requested_scopes: list[str]
     created_at: str = field(default_factory=utc_now_iso)
     status: str = "pending"
+    # Phase 9: optional human assignee who should review this approval
+    assignee: str | None = None
 
 
 @dataclass

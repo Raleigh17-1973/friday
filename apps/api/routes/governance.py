@@ -107,9 +107,35 @@ def bulk_decide(payload: BulkDecidePayload) -> dict:
     return {"processed": len(results), "results": results}
 
 
+@router.post("/approvals/{approval_id}/assign")
+def assign_approval(approval_id: str, payload: dict) -> dict:
+    """Phase 9: Assign a reviewer to an approval request."""
+    assignee = str(payload.get("assignee", ""))
+    if not assignee:
+        raise HTTPException(status_code=400, detail="assignee is required")
+    try:
+        req = service.approvals.assign(approval_id, assignee)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="approval not found") from exc
+    try:
+        service.notifications.create(
+            recipient_id=assignee,
+            type="approval_required",
+            title="Approval assigned to you",
+            body=req.action_summary[:200],
+            entity_type="approval",
+            entity_id=approval_id,
+        )
+    except Exception:
+        pass
+    return asdict(req)
+
+
 @router.get("/approvals")
-def list_approvals(status: str = "pending") -> dict:
-    if status == "all":
+def list_approvals(status: str = "pending", assignee: Optional[str] = None) -> dict:
+    if assignee:
+        items = service.approvals.list_for_assignee(assignee)
+    elif status == "all":
         items = service.approvals.list_all()
     else:
         items = service.approvals.list_pending()

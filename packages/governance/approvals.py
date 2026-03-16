@@ -36,6 +36,7 @@ class ApprovalService:
                 requested_scopes=data["requested_scopes"],
                 created_at=data.get("created_at", ""),
                 status=data.get("status", "pending"),
+                assignee=data.get("assignee"),
             )
             self._store[req.approval_id] = req
             self._by_run[req.run_id].append(req.approval_id)
@@ -51,6 +52,7 @@ class ApprovalService:
             "requested_scopes": req.requested_scopes,
             "created_at": req.created_at,
             "status": req.status,
+            "assignee": req.assignee,
         })
         self._db.execute(
             "INSERT OR REPLACE INTO approvals (approval_id, run_id, data) VALUES (?, ?, ?)",
@@ -79,8 +81,19 @@ class ApprovalService:
     def get(self, approval_id: str) -> ApprovalRequest:
         return self._store[approval_id]
 
+    def assign(self, approval_id: str, assignee: str) -> ApprovalRequest:
+        """Phase 9: Assign a reviewer to an approval request."""
+        req = self._store[approval_id]
+        req.assignee = assignee
+        self._persist(req)
+        return req
+
     def list_pending(self) -> list[ApprovalRequest]:
         return [r for r in self._store.values() if r.status == "pending"]
+
+    def list_for_assignee(self, assignee: str) -> list[ApprovalRequest]:
+        """Phase 9: Return all approvals assigned to a specific reviewer."""
+        return [r for r in self._store.values() if r.assignee == assignee]
 
     def list_all(self) -> list[ApprovalRequest]:
         return list(self._store.values())

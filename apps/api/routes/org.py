@@ -145,6 +145,37 @@ def process_meeting_notes(meeting_id: str, payload: MeetingNotesPayload) -> dict
     note = service.meetings.process_notes(meeting_id, payload.raw_text, org_id=payload.org_id)
     result = asdict(note)
     result["action_items"] = [asdict(a) for a in note.action_items]
+
+    # Phase 4: Auto-create a Task for each action item so they appear in /tasks
+    created_task_ids: list[str] = []
+    for item in note.action_items:
+        try:
+            assignee = item.owner if item.owner and item.owner.upper() != "TBD" else None
+            task = service.tasks.create(
+                title=item.description[:200],
+                description=f"Action item from meeting {meeting_id}",
+                assignee=assignee,
+                due_date=item.due_date or None,
+                priority="medium",
+                status="open",
+                created_by="friday",
+            )
+            created_task_ids.append(task.task_id)
+            if assignee:
+                try:
+                    service.notifications.create(
+                        recipient_id=assignee,
+                        type="task_assigned",
+                        title="New task from meeting",
+                        body=item.description[:200],
+                        entity_type="task",
+                        entity_id=task.task_id,
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    result["tasks_created"] = created_task_ids
     return result
 
 
