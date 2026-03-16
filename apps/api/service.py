@@ -16,7 +16,7 @@ from packages.storage import FileStorageService
 from packages.credentials import CredentialService
 from packages.templates import TemplateService
 from packages.analytics import KPIService
-from packages.okrs import OKRService
+from packages.okrs import EnterpriseOKRService
 from packages.workspaces import WorkspaceService
 from packages.projects.service import ProjectService
 from packages.brand import BrandAssetService
@@ -103,8 +103,8 @@ class FridayService:
         analytics_db = self.root / "data" / "friday_analytics.sqlite3"
         self.kpis = KPIService(db_path=analytics_db)
 
-        okr_db = self.root / "data" / "friday_okrs.sqlite3"
-        self.okrs = OKRService(db_path=okr_db)
+        okr_db = self.root / "data" / "friday_okrs_v2.sqlite3"
+        self.okrs = EnterpriseOKRService(db_path=okr_db)
 
         workspace_db = self.root / "data" / "workspaces.db"
         self.workspaces = WorkspaceService(db_path=workspace_db)

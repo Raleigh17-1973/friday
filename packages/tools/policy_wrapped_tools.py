@@ -673,43 +673,118 @@ class ToolExecutor:
                 return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
         return ToolResult(tool_name=tool_name, ok=False, output={}, error="unknown analytics sub-tool")
 
-    # ---- Phase 5: OKRs ----
+    # ---- Enterprise OKRs ----
 
     def _okrs_tool(self, tool_name: str, args: dict[str, Any]) -> ToolResult:
         try:
-            from packages.okrs import OKRService
+            from packages.okrs import EnterpriseOKRService
         except ImportError as exc:
             return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
 
-        db_path = self._repo_root / "data" / "friday_okrs.sqlite3"
-        svc = OKRService(db_path=db_path)
+        db_path = self._repo_root / "data" / "friday_okrs_v2.sqlite3"
+        svc = EnterpriseOKRService(db_path=db_path)
 
+        # ── Read: status overview ─────────────────────────────────────────────
         if tool_name == "okrs.status":
-            objectives = svc.list_objectives()
+            objs = svc.list_objectives(org_id=str(args.get("org_id", "org-1")))
             return ToolResult(tool_name=tool_name, ok=True, output={
-                "objectives": [{"id": o.objective_id, "title": o.title, "progress": o.progress} for o in objectives]
+                "objectives": [
+                    {"id": o.objective_id, "title": o.title,
+                     "type": o.objective_type, "health": o.health_current,
+                     "score": o.confidence_current}
+                    for o in objs
+                ]
             })
 
-        if tool_name == "okrs.create":
+        # ── Write: org node ───────────────────────────────────────────────────
+        if tool_name == "okrs.create_org_node":
             try:
-                obj = svc.create_objective(
-                    title=str(args.get("title", "New Objective")),
-                    period=str(args.get("period", "Q1")),
-                    org_id=str(args.get("org_id", "org-1")),
-                    description=str(args.get("description", "")),
-                    owner=str(args.get("owner", "")),
-                    level=str(args.get("level", "team")),
+                node = svc.create_org_node(
+                    name=str(args.get("name", "New Team")),
+                    node_type=str(args.get("node_type", "team")),
                     parent_id=args.get("parent_id"),
-                    workspace_id=args.get("workspace_id"),
-                    collaborators=list(args.get("collaborators") or []),
-                    rationale=str(args.get("rationale", "")),
+                    org_id=str(args.get("org_id", "org-1")),
+                    owner_user_id=str(args.get("owner_user_id", "user-1")),
                 )
                 return ToolResult(tool_name=tool_name, ok=True, output={
-                    "obj_id": obj.objective_id,
-                    "title": obj.title,
-                    "period": obj.period,
-                    "level": obj.level,
-                    "created": True,
+                    "node_id": node.node_id, "name": node.name, "created": True,
+                })
+            except Exception as exc:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        # ── Write: period ─────────────────────────────────────────────────────
+        if tool_name == "okrs.create_period":
+            try:
+                period = svc.create_period(
+                    name=str(args.get("name", "")),
+                    period_type=str(args.get("period_type", "quarterly")),
+                    fiscal_year=int(args.get("fiscal_year", 2026)),
+                    quarter=args.get("quarter"),
+                    start_date=str(args.get("start_date", "")),
+                    end_date=str(args.get("end_date", "")),
+                    org_id=str(args.get("org_id", "org-1")),
+                )
+                return ToolResult(tool_name=tool_name, ok=True, output={
+                    "period_id": period.period_id, "name": period.name, "created": True,
+                })
+            except Exception as exc:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        # ── Write: objective ──────────────────────────────────────────────────
+        if tool_name == "okrs.create_objective":
+            try:
+                obj = svc.create_objective(
+                    period_id=str(args.get("period_id", "")),
+                    org_node_id=str(args.get("org_node_id", "node-company")),
+                    title=str(args.get("title", "")),
+                    objective_type=str(args.get("objective_type", "committed")),
+                    owner_user_id=str(args.get("owner_user_id", "user-1")),
+                    org_id=str(args.get("org_id", "org-1")),
+                    description=str(args.get("description", "")),
+                    rationale=str(args.get("rationale", "")),
+                    parent_objective_id=args.get("parent_objective_id"),
+                    sponsor_user_id=args.get("sponsor_user_id"),
+                )
+                return ToolResult(tool_name=tool_name, ok=True, output={
+                    "objective_id": obj.objective_id, "title": obj.title,
+                    "type": obj.objective_type, "created": True,
+                })
+            except Exception as exc:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        if tool_name == "okrs.update_objective":
+            try:
+                obj_id = str(args.get("objective_id", ""))
+                if not obj_id:
+                    return ToolResult(tool_name=tool_name, ok=False, output={}, error="objective_id required")
+                update_kwargs = {k: v for k, v in args.items() if k != "objective_id" and v is not None}
+                obj = svc.update_objective(obj_id, **update_kwargs)
+                return ToolResult(tool_name=tool_name, ok=True, output={
+                    "objective_id": obj.objective_id, "updated": True,
+                })
+            except Exception as exc:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        # ── Write: key result ─────────────────────────────────────────────────
+        if tool_name == "okrs.create_kr":
+            try:
+                kr = svc.create_key_result(
+                    objective_id=str(args.get("objective_id", "")),
+                    title=str(args.get("title", "")),
+                    kr_type=str(args.get("kr_type", "metric")),
+                    owner_user_id=str(args.get("owner_user_id", "user-1")),
+                    org_id=str(args.get("org_id", "org-1")),
+                    baseline_value=args.get("baseline_value"),
+                    target_value=args.get("target_value"),
+                    unit=str(args.get("unit", "")),
+                    direction=str(args.get("direction", "increase")),
+                    metric_name=args.get("metric_name"),
+                    description=str(args.get("description", "")),
+                    due_date=args.get("due_date"),
+                )
+                return ToolResult(tool_name=tool_name, ok=True, output={
+                    "kr_id": kr.kr_id, "title": kr.title,
+                    "type": kr.kr_type, "created": True,
                 })
             except Exception as exc:
                 return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
@@ -718,22 +793,125 @@ class ToolExecutor:
             try:
                 kr_id = str(args.get("kr_id", ""))
                 if not kr_id:
-                    return ToolResult(tool_name=tool_name, ok=False, output={}, error="kr_id is required")
-                kr = svc.update_key_result(
-                    kr_id=kr_id,
-                    current_value=args.get("current_value"),
-                    target_value=args.get("target_value"),
-                    title=args.get("title"),
-                    unit=args.get("unit"),
-                )
+                    return ToolResult(tool_name=tool_name, ok=False, output={}, error="kr_id required")
+                update_kwargs = {k: v for k, v in args.items() if k != "kr_id" and v is not None}
+                kr = svc.update_key_result(kr_id, **update_kwargs)
                 return ToolResult(tool_name=tool_name, ok=True, output={
-                    "kr_id": kr.kr_id if kr else kr_id,
-                    "updated": True,
+                    "kr_id": kr.kr_id, "score": kr.score_current, "updated": True,
                 })
             except Exception as exc:
                 return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
 
-        return ToolResult(tool_name=tool_name, ok=False, output={}, error="unknown okrs sub-tool")
+        # ── Write: check-in ───────────────────────────────────────────────────
+        if tool_name == "okrs.checkin_kr":
+            try:
+                checkin = svc.add_checkin(
+                    object_type="key_result",
+                    object_id=str(args.get("kr_id", "")),
+                    user_id=str(args.get("user_id", "user-1")),
+                    checkin_date=args.get("checkin_date"),
+                    current_value=args.get("current_value"),
+                    confidence=args.get("confidence"),
+                    blockers=str(args.get("blockers", "")),
+                    decisions_needed=str(args.get("decisions_needed", "")),
+                    narrative_update=str(args.get("narrative_update", "")),
+                    next_steps=str(args.get("next_steps", "")),
+                    org_id=str(args.get("org_id", "org-1")),
+                )
+                return ToolResult(tool_name=tool_name, ok=True, output={
+                    "checkin_id": checkin.checkin_id,
+                    "score_snapshot": checkin.score_snapshot,
+                    "created": True,
+                })
+            except Exception as exc:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        # ── Write: KPI ────────────────────────────────────────────────────────
+        if tool_name == "okrs.create_kpi":
+            try:
+                kpi = svc.create_kpi(
+                    name=str(args.get("name", "")),
+                    unit=str(args.get("unit", "")),
+                    org_id=str(args.get("org_id", "org-1")),
+                    org_node_id=args.get("org_node_id"),
+                    metric_definition=str(args.get("metric_definition", "")),
+                    description=str(args.get("description", "")),
+                    target_band_low=args.get("target_band_low"),
+                    target_band_high=args.get("target_band_high"),
+                    update_frequency=str(args.get("update_frequency", "monthly")),
+                )
+                return ToolResult(tool_name=tool_name, ok=True, output={
+                    "kpi_id": kpi.kpi_id, "name": kpi.name, "created": True,
+                })
+            except Exception as exc:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        # ── Write: KR–KPI link ────────────────────────────────────────────────
+        if tool_name == "okrs.link_kpi":
+            try:
+                link = svc.link_kr_to_kpi(
+                    kr_id=str(args.get("kr_id", "")),
+                    kpi_id=str(args.get("kpi_id", "")),
+                    link_type=str(args.get("link_type", "derived_from")),
+                    contribution_notes=str(args.get("contribution_notes", "")),
+                )
+                return ToolResult(tool_name=tool_name, ok=True, output={
+                    "link_id": link.link_id, "linked": True,
+                })
+            except Exception as exc:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        # ── Write: dependency ─────────────────────────────────────────────────
+        if tool_name == "okrs.create_dependency":
+            try:
+                dep = svc.create_dependency(
+                    source_type=str(args.get("source_type", "objective")),
+                    source_id=str(args.get("source_id", "")),
+                    target_type=str(args.get("target_type", "objective")),
+                    target_id=str(args.get("target_id", "")),
+                    dep_type=str(args.get("dep_type", "contributes_to")),
+                    severity=str(args.get("severity", "medium")),
+                    org_id=str(args.get("org_id", "org-1")),
+                )
+                return ToolResult(tool_name=tool_name, ok=True, output={
+                    "dependency_id": dep.dependency_id, "created": True,
+                })
+            except Exception as exc:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        # ── Write: grade objective ────────────────────────────────────────────
+        if tool_name == "okrs.grade_objective":
+            try:
+                result = svc.grade_objective(
+                    objective_id=str(args.get("objective_id", "")),
+                    grade=float(args.get("grade", 0.0)),
+                    retrospective=str(args.get("retrospective", "")),
+                    carry_forward=bool(args.get("carry_forward", False)),
+                    next_period_id=args.get("next_period_id"),
+                )
+                return ToolResult(tool_name=tool_name, ok=True, output=result)
+            except Exception as exc:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        # ── Write: meeting artifact ───────────────────────────────────────────
+        if tool_name == "okrs.generate_meeting":
+            try:
+                artifact = svc.generate_meeting_artifact(
+                    meeting_type=str(args.get("meeting_type", "weekly_checkin")),
+                    org_node_id=args.get("org_node_id"),
+                    period_id=args.get("period_id"),
+                    org_id=str(args.get("org_id", "org-1")),
+                )
+                return ToolResult(tool_name=tool_name, ok=True, output={
+                    "artifact_id": artifact.artifact_id,
+                    "meeting_type": artifact.meeting_type,
+                    "agenda_markdown": artifact.agenda_markdown[:500],
+                    "created": True,
+                })
+            except Exception as exc:
+                return ToolResult(tool_name=tool_name, ok=False, output={}, error=str(exc))
+
+        return ToolResult(tool_name=tool_name, ok=False, output={}, error=f"unknown okrs sub-tool: {tool_name}")
 
     # ---- Process management ----
 

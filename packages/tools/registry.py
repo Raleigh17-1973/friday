@@ -120,20 +120,71 @@ class ToolRegistry:
                 scopes=["jira.read"], enabled=True,
                 meta={"description": "Search Jira issues (JQL)"},
             ),
+            # ---- Enterprise OKRs (v2) ----
             "okrs.status": ToolDefinition(
                 tool_id="okrs.status", source="function", mode="read_only",
                 scopes=["okrs.read"], enabled=True,
-                meta={"description": "Get OKR status and progress"},
+                meta={"description": "List all objectives for an org with health and type"},
             ),
-            "okrs.create": ToolDefinition(
-                tool_id="okrs.create", source="function", mode="write",
+            "okrs.create_org_node": ToolDefinition(
+                tool_id="okrs.create_org_node", source="function", mode="write",
                 scopes=["okrs.write"], enabled=True,
-                meta={"description": "Create a new OKR objective with title, period, level, and optional key results"},
+                meta={"description": "Create an org hierarchy node (company/BU/department/team)"},
+            ),
+            "okrs.create_period": ToolDefinition(
+                tool_id="okrs.create_period", source="function", mode="write",
+                scopes=["okrs.write"], enabled=True,
+                meta={"description": "Create an OKR planning period (annual or quarterly)"},
+            ),
+            "okrs.create_objective": ToolDefinition(
+                tool_id="okrs.create_objective", source="function", mode="write",
+                scopes=["okrs.write"], enabled=True,
+                meta={"description": "Create a committed or aspirational objective for a period and org node"},
+            ),
+            "okrs.update_objective": ToolDefinition(
+                tool_id="okrs.update_objective", source="function", mode="write",
+                scopes=["okrs.write"], enabled=True,
+                meta={"description": "Update an objective's fields, status, quality score, or health"},
+            ),
+            "okrs.create_kr": ToolDefinition(
+                tool_id="okrs.create_kr", source="function", mode="write",
+                scopes=["okrs.write"], enabled=True,
+                meta={"description": "Create a metric, milestone, or binary key result under an objective"},
             ),
             "okrs.update_kr": ToolDefinition(
                 tool_id="okrs.update_kr", source="function", mode="write",
                 scopes=["okrs.write"], enabled=True,
-                meta={"description": "Update a key result's current value or metadata"},
+                meta={"description": "Update a key result — triggers score and health recompute"},
+            ),
+            "okrs.checkin_kr": ToolDefinition(
+                tool_id="okrs.checkin_kr", source="function", mode="write",
+                scopes=["okrs.write"], enabled=True,
+                meta={"description": "Submit a weekly check-in for a key result with value, confidence, and blockers"},
+            ),
+            "okrs.create_kpi": ToolDefinition(
+                tool_id="okrs.create_kpi", source="function", mode="write",
+                scopes=["okrs.write"], enabled=True,
+                meta={"description": "Create an enterprise KPI linked to an org node"},
+            ),
+            "okrs.link_kpi": ToolDefinition(
+                tool_id="okrs.link_kpi", source="function", mode="write",
+                scopes=["okrs.write"], enabled=True,
+                meta={"description": "Link a KPI to a key result (derived_from, influenced_by, or guardrail)"},
+            ),
+            "okrs.create_dependency": ToolDefinition(
+                tool_id="okrs.create_dependency", source="function", mode="write",
+                scopes=["okrs.write"], enabled=True,
+                meta={"description": "Create a cross-objective dependency (contributes_to, blocked_by, shared_commitment, informs)"},
+            ),
+            "okrs.grade_objective": ToolDefinition(
+                tool_id="okrs.grade_objective", source="function", mode="write",
+                scopes=["okrs.write"], enabled=True,
+                meta={"description": "Grade a completed objective at period end with final score and retrospective", "risk_level": "medium"},
+            ),
+            "okrs.generate_meeting": ToolDefinition(
+                tool_id="okrs.generate_meeting", source="function", mode="write",
+                scopes=["okrs.write"], enabled=True,
+                meta={"description": "Auto-generate a meeting preparation artifact"},
             ),
             # ---- Process management ----
             "process.create": ToolDefinition(

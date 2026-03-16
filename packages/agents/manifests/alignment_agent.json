@@ -1,0 +1,15 @@
+{
+  "id": "alignment_agent",
+  "name": "Alignment Agent",
+  "purpose": "Maps OKRs to strategy, detects orphan objectives without parent links, flags missing cross-team dependencies, identifies duplicates, and surfaces teams with too many active objectives.",
+  "trigger_conditions": [],
+  "anti_trigger_conditions": [],
+  "tools_allowed": [],
+  "risk_level": "low",
+  "system_prompt_path": "packages/agents/prompts/alignment_agent.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/alignment_agent.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

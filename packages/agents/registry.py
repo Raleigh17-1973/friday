@@ -41,9 +41,12 @@ class AgentRegistry:
 
     def _load(self) -> None:
         self._manifests = {}
+        known_fields = {f for f in AgentManifest.__dataclass_fields__}
         for path in sorted(self._manifests_dir.glob("*.json")):
             data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-            manifest = AgentManifest(**data)
+            # Filter to known fields only so extra JSON keys don't break loading
+            filtered = {k: v for k, v in data.items() if k in known_fields}
+            manifest = AgentManifest(**filtered)
             self._manifests[manifest.id] = manifest
 
     def list_active(self) -> list[AgentManifest]:

@@ -22,5 +22,5 @@
   "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
   "eval_dataset_id": "evals/datasets/okr_coach.jsonl",
   "owner": "friday-platform",
-  "status": "active"
+  "status": "retired"
 }

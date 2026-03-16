@@ -1,0 +1,15 @@
+{
+  "id": "meeting_prep_agent",
+  "name": "Meeting Prep Agent",
+  "purpose": "Auto-generates structured meeting preparation packets for weekly check-ins, portfolio reviews, quarterly reviews, and planning workshops.",
+  "trigger_conditions": [],
+  "anti_trigger_conditions": [],
+  "tools_allowed": [],
+  "risk_level": "low",
+  "system_prompt_path": "packages/agents/prompts/meeting_prep_agent.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/meeting_prep_agent.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

@@ -2126,6 +2126,12 @@ input:focus-visible {
   background: rgba(99, 102, 241, 0.08);
 }
 
+/* Nested child nav items — indented under their parent */
+.rail-nav-link-child {
+  padding-left: 2rem;
+  font-size: 0.8rem;
+}
+
 /* =========================================================
    SEGMENTED CONTROL (ASK / PLAN / ACT)
    ========================================================= */

@@ -1,0 +1,15 @@
+{
+  "id": "okr_governance_agent",
+  "name": "OKR Governance Agent",
+  "purpose": "Generates governance reports flagging stale objectives, unaligned OKRs, compensation language, missing baselines, and committed misses requiring retrospectives.",
+  "trigger_conditions": [],
+  "anti_trigger_conditions": [],
+  "tools_allowed": [],
+  "risk_level": "low",
+  "system_prompt_path": "packages/agents/prompts/okr_governance_agent.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/okr_governance_agent.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

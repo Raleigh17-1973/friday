@@ -1,0 +1,15 @@
+{
+  "id": "scoring_agent",
+  "name": "Scoring Agent",
+  "purpose": "Forecasts quarter-end OKR scores using linear extrapolation from check-in history. Detects sandbagging patterns and score-confidence divergence.",
+  "trigger_conditions": [],
+  "anti_trigger_conditions": [],
+  "tools_allowed": [],
+  "risk_level": "low",
+  "system_prompt_path": "packages/agents/prompts/scoring_agent.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/scoring_agent.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

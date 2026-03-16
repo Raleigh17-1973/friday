@@ -9,9 +9,12 @@ import {
   ClipboardCheck,
   FileText,
   Folders,
+  GitBranch,
   Home,
+  LayoutDashboard,
   MessageSquare,
   Palette,
+  PenSquare,
   Settings,
   Target,
   Workflow,
@@ -32,6 +35,7 @@ type NavItem = {
   href: string;
   icon: LucideIcon;
   label: string;
+  children?: NavItem[];
   /** Roles that can see this item. Undefined = visible to all. */
   roles?: UserRole[];
 };
@@ -42,10 +46,15 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/tasks",      icon: CheckSquare,    label: "Tasks"          },
   { href: "/approvals",  icon: ClipboardCheck, label: "Approvals"      },
   { href: "/processes",  icon: Workflow,       label: "Process Library" },
-  { href: "/documents",  icon: FileText,      label: "Documents"       },
-  { href: "/analytics",  icon: BarChart2,     label: "Analytics"       },
-  { href: "/okrs",       icon: Target,        label: "OKRs"            },
-  { href: "/workspaces", icon: Folders,       label: "Workspaces"      },
+  { href: "/documents",  icon: FileText,       label: "Documents"       },
+  { href: "/analytics",  icon: BarChart2,      label: "Analytics"       },
+  { href: "/okrs",       icon: Target,         label: "OKRs",           children: [
+    { href: "/okrs/setup",                icon: Settings,        label: "Setup"          },
+    { href: "/okrs/plan",                 icon: PenSquare,       label: "Plan"           },
+    { href: "/okrs/alignment",            icon: GitBranch,       label: "Alignment"      },
+    { href: "/okrs/dashboards/executive", icon: LayoutDashboard, label: "Exec Dashboard" },
+  ]},
+  { href: "/workspaces", icon: Folders,        label: "Workspaces"      },
   { href: "/qa",             icon: FlaskConical,   label: "QA Registry",    roles: ["developer", "dev_admin"] },
   { href: "/settings",       icon: Settings,       label: "Settings",       roles: ["developer", "dev_admin", "tool_admin"] },
   { href: "/design-system",  icon: Palette,        label: "Design System",  roles: ["developer", "dev_admin"] },
@@ -142,35 +151,60 @@ export function PageShell({
         </div>
 
         {/* Nav Links */}
-        {NAV_ITEMS.filter(({ roles }) => !roles || roles.includes(userRole)).map(({ href, icon: Icon, label }) => {
-          const isActive = currentPath === href || (href !== "/" && currentPath.startsWith(href));
+        {NAV_ITEMS.filter(({ roles }) => !roles || roles.includes(userRole)).map(({ href, icon: Icon, label, children }) => {
+          const isActive = href === "/" ? currentPath === "/" : currentPath === href || currentPath.startsWith(href + "/") || currentPath === href;
+          const isSectionActive = children ? currentPath.startsWith(href) : false;
           return (
-            <Link
-              key={href}
-              href={href}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.625rem",
-                padding: "0.5rem 1rem",
-                fontSize: "0.875rem",
-                fontWeight: isActive ? 600 : 400,
-                color: isActive ? "var(--accent)" : "var(--text-muted)",
-                background: isActive ? "rgba(var(--accent-rgb, 99,102,241), 0.08)" : "transparent",
-                borderRadius: "0.375rem",
-                margin: "0 0.5rem",
-                textDecoration: "none",
-                transition: "background 0.15s, color 0.15s",
-              }}
-            >
-              <Icon
-                size={16}
-                strokeWidth={1.75}
-                aria-hidden="true"
-                color={isActive ? "var(--accent)" : "var(--text-muted)"}
-              />
-              {label}
-            </Link>
+            <React.Fragment key={href}>
+              <Link
+                href={href}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.625rem",
+                  padding: "0.5rem 1rem",
+                  fontSize: "0.875rem",
+                  fontWeight: isActive ? 600 : 400,
+                  color: isActive ? "var(--accent)" : "var(--text-muted)",
+                  background: isActive ? "rgba(var(--accent-rgb, 99,102,241), 0.08)" : "transparent",
+                  borderRadius: "0.375rem",
+                  margin: "0 0.5rem",
+                  textDecoration: "none",
+                  transition: "background 0.15s, color 0.15s",
+                }}
+              >
+                <Icon size={16} strokeWidth={1.75} aria-hidden="true" color={isActive ? "var(--accent)" : "var(--text-muted)"} />
+                {label}
+              </Link>
+              {/* Nested children — always visible when section is active */}
+              {children && isSectionActive && children.map(child => {
+                const childActive = currentPath === child.href || currentPath.startsWith(child.href + "/");
+                const ChildIcon = child.icon;
+                return (
+                  <Link
+                    key={child.href}
+                    href={child.href}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.5rem",
+                      padding: "0.3rem 1rem 0.3rem 2.5rem",
+                      fontSize: "0.8rem",
+                      fontWeight: childActive ? 600 : 400,
+                      color: childActive ? "var(--accent)" : "var(--text-muted)",
+                      background: childActive ? "rgba(var(--accent-rgb, 99,102,241), 0.08)" : "transparent",
+                      borderRadius: "0.375rem",
+                      margin: "0 0.5rem",
+                      textDecoration: "none",
+                      transition: "background 0.15s, color 0.15s",
+                    }}
+                  >
+                    <ChildIcon size={13} strokeWidth={1.75} aria-hidden="true" color={childActive ? "var(--accent)" : "var(--text-muted)"} />
+                    {child.label}
+                  </Link>
+                );
+              })}
+            </React.Fragment>
           );
         })}
       </nav>

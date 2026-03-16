@@ -1,0 +1,15 @@
+{
+  "id": "metrics_agent",
+  "name": "Metrics Agent",
+  "purpose": "Suggests KPI-to-KR mappings by metric name similarity, detects vague metric definitions, flags manual KRs without source references, and recommends guardrail KPIs for aggressive targets.",
+  "trigger_conditions": [],
+  "anti_trigger_conditions": [],
+  "tools_allowed": [],
+  "risk_level": "low",
+  "system_prompt_path": "packages/agents/prompts/metrics_agent.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/metrics_agent.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

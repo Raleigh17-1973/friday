@@ -1,0 +1,15 @@
+{
+  "id": "okr_writing_agent",
+  "name": "OKR Writing Agent",
+  "purpose": "Rewrites weak objectives and KRs into outcome-oriented, measurable OKRs. Classifies committed vs aspirational. Scores quality 1-10. Detects activity-based KRs and missing KPI opportunities.",
+  "trigger_conditions": [],
+  "anti_trigger_conditions": [],
+  "tools_allowed": [],
+  "risk_level": "low",
+  "system_prompt_path": "packages/agents/prompts/okr_writing_agent.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/okr_writing_agent.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

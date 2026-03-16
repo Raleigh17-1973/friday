@@ -1,0 +1,15 @@
+{
+  "id": "checkin_coach",
+  "name": "Check-in Coach",
+  "purpose": "Guides teams through weekly OKR check-ins. Drafts narrative updates from current values and time elapsed. Identifies when committed KRs need escalation.",
+  "trigger_conditions": [],
+  "anti_trigger_conditions": [],
+  "tools_allowed": [],
+  "risk_level": "low",
+  "system_prompt_path": "packages/agents/prompts/checkin_coach.md",
+  "input_schema": "packages/agents/schemas/specialist_input.schema.json",
+  "output_schema": "packages/agents/schemas/specialist_memo.schema.json",
+  "eval_dataset_id": "evals/datasets/checkin_coach.jsonl",
+  "owner": "friday-platform",
+  "status": "active"
+}

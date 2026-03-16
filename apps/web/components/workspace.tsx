@@ -11,7 +11,10 @@ import {
   FileText,
   FlaskConical,
   Folders,
+  GitBranch,
   Home,
+  LayoutDashboard,
+  PenSquare,
   Settings,
   Target,
   Workflow,
@@ -78,6 +81,7 @@ type NavItem = {
   label: string;
   href: string;
   icon: LucideIcon;
+  children?: NavItem[];
   roles?: UserRole[];
 };
 
@@ -88,7 +92,12 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Process Library", href: "/processes",  icon: Workflow      },
   { label: "Documents",       href: "/documents",  icon: FileText      },
   { label: "Analytics",       href: "/analytics",  icon: BarChart2     },
-  { label: "OKRs",            href: "/okrs",       icon: Target        },
+  { label: "OKRs",            href: "/okrs",       icon: Target,        children: [
+    { label: "Setup",          href: "/okrs/setup",                icon: Settings        },
+    { label: "Plan",           href: "/okrs/plan",                 icon: PenSquare       },
+    { label: "Alignment",      href: "/okrs/alignment",            icon: GitBranch       },
+    { label: "Exec Dashboard", href: "/okrs/dashboards/executive", icon: LayoutDashboard },
+  ]},
   { label: "Workspaces",      href: "/workspaces", icon: Folders       },
   { label: "QA Registry",     href: "/qa",         icon: FlaskConical, roles: ["developer", "dev_admin"] },
   { label: "Settings",        href: "/settings",   icon: Settings,     roles: ["developer", "dev_admin", "tool_admin"] },
@@ -218,16 +227,35 @@ function LeftRail({
       </header>
 
       <nav className="rail-nav" aria-label="Main navigation">
-        {NAV_ITEMS.filter(({ roles }) => !roles || roles.includes(userRole)).map(({ label, href, icon: Icon }) => (
-          <a
-            key={href}
-            href={href}
-            className={`rail-nav-link${currentPath.startsWith(href) ? " rail-nav-link-active" : ""}`}
-          >
-            <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
-            {label}
-          </a>
-        ))}
+        {NAV_ITEMS.filter(({ roles }) => !roles || roles.includes(userRole)).map(({ label, href, icon: Icon, children }) => {
+          const isActive = href === "/" ? currentPath === "/" : currentPath === href || currentPath.startsWith(href + "/");
+          const isSectionActive = children ? currentPath.startsWith(href) : false;
+          return (
+            <div key={href}>
+              <a
+                href={href}
+                className={`rail-nav-link${isActive ? " rail-nav-link-active" : ""}`}
+              >
+                <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
+                {label}
+              </a>
+              {children && isSectionActive && children.map(child => {
+                const childActive = currentPath === child.href || currentPath.startsWith(child.href + "/");
+                const ChildIcon = child.icon;
+                return (
+                  <a
+                    key={child.href}
+                    href={child.href}
+                    className={`rail-nav-link rail-nav-link-child${childActive ? " rail-nav-link-active" : ""}`}
+                  >
+                    <ChildIcon size={13} strokeWidth={1.75} aria-hidden="true" />
+                    {child.label}
+                  </a>
+                );
+              })}
+            </div>
+          );
+        })}
       </nav>
 
       <button className="new-chat" onClick={() => onCreate()}>
