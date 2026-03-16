@@ -189,6 +189,9 @@ class RunTrace:
     feedback: dict[str, Any]
     outcome: dict[str, Any]
     created_at: str = field(default_factory=utc_now_iso)
+    # PR-08: persisted when approval is required so the execute endpoint can resume.
+    # Each entry: {"tool": str, "specialist": str, "args": dict}
+    pending_write_plan: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
