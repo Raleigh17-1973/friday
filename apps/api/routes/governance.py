@@ -28,16 +28,33 @@ class PromoteCandidatePayload(BaseModel):
     approved: bool = False
 
 
-@router.post("/approvals/{approval_id}/approve")
-def approve(approval_id: str) -> dict:
+def _approval_for_auth(approval_id: str, auth: AuthContext):
     try:
-        req = service.approvals.approve(approval_id)
+        req = service.approvals.get(approval_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="approval not found") from exc
+    trace = service.audit.get_run(req.run_id)
+    if trace is None or trace.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="approval not found")
+    return req
+
+
+def _candidate_for_auth(candidate_id: str, auth: AuthContext) -> dict:
+    candidate = service.memory.get_candidate(candidate_id)
+    if candidate is None or str(candidate.get("org_id")) != auth.org_id:
+        raise HTTPException(status_code=404, detail="candidate not found")
+    return candidate
+
+
+@router.post("/approvals/{approval_id}/approve")
+def approve(approval_id: str, request: Request) -> dict:
+    auth = _auth(request)
+    req = _approval_for_auth(approval_id, auth)
+    req = service.approvals.approve(approval_id)
     try:
         service.activity.log(
             action="generic", entity_type="approval", entity_id=approval_id,
-            entity_title=req.action_summary[:80], actor_id="user-1", decision="approved",
+            entity_title=req.action_summary[:80], actor_id=auth.user_id, decision="approved",
         )
     except Exception:
         pass
@@ -45,12 +62,14 @@ def approve(approval_id: str) -> dict:
 
 
 @router.post("/approvals/{approval_id}/execute")
-def execute_approval(approval_id: str) -> dict:
+def execute_approval(approval_id: str, request: Request) -> dict:
     """PR-08: Execute the deferred write plan for an already-approved ApprovalRequest.
 
     Call this after POST /approvals/{id}/approve to run the tool actions that were
     held pending human sign-off.
     """
+    auth = _auth(request)
+    _approval_for_auth(approval_id, auth)
     try:
         write_actions = service.manager.execute_pending_write_plan(approval_id)
     except KeyError as exc:
@@ -61,15 +80,14 @@ def execute_approval(approval_id: str) -> dict:
 
 
 @router.post("/approvals/{approval_id}/reject")
-def reject(approval_id: str) -> dict:
-    try:
-        req = service.approvals.reject(approval_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="approval not found") from exc
+def reject(approval_id: str, request: Request) -> dict:
+    auth = _auth(request)
+    req = _approval_for_auth(approval_id, auth)
+    req = service.approvals.reject(approval_id)
     try:
         service.activity.log(
             action="generic", entity_type="approval", entity_id=approval_id,
-            entity_title=req.action_summary[:80], actor_id="user-1", decision="rejected",
+            entity_title=req.action_summary[:80], actor_id=auth.user_id, decision="rejected",
         )
     except Exception:
         pass
@@ -77,46 +95,47 @@ def reject(approval_id: str) -> dict:
 
 
 @router.get("/approvals/{approval_id}")
-def get_approval(approval_id: str) -> dict:
-    try:
-        req = service.approvals.get(approval_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="approval not found") from exc
+def get_approval(approval_id: str, request: Request) -> dict:
+    auth = _auth(request)
+    req = _approval_for_auth(approval_id, auth)
     return asdict(req)
 
 
 @router.post("/approvals/bulk-decide", status_code=200)
-def bulk_decide(payload: BulkDecidePayload) -> dict:
+def bulk_decide(payload: BulkDecidePayload, request: Request) -> dict:
+    auth = _auth(request)
     if payload.decision not in ("approve", "reject"):
         raise HTTPException(status_code=400, detail="decision must be 'approve' or 'reject'")
     results: list[dict] = []
     for aid in payload.approval_ids:
         try:
+            req = _approval_for_auth(aid, auth)
             req = service.approvals.approve(aid) if payload.decision == "approve" else service.approvals.reject(aid)
             results.append({"approval_id": aid, "status": req.status})
             try:
                 service.activity.log(
                     action="generic", entity_type="approval", entity_id=aid,
-                    entity_title=req.action_summary[:80], actor_id="user-1",
+                    entity_title=req.action_summary[:80], actor_id=auth.user_id,
                     decision=payload.decision + "d", bulk=True,
                 )
             except Exception:
                 pass
+        except HTTPException:
+            results.append({"approval_id": aid, "error": "not found"})
         except KeyError:
             results.append({"approval_id": aid, "error": "not found"})
     return {"processed": len(results), "results": results}
 
 
 @router.post("/approvals/{approval_id}/assign")
-def assign_approval(approval_id: str, payload: dict) -> dict:
+def assign_approval(approval_id: str, payload: dict, request: Request) -> dict:
     """Phase 9: Assign a reviewer to an approval request."""
+    auth = _auth(request)
     assignee = str(payload.get("assignee", ""))
     if not assignee:
         raise HTTPException(status_code=400, detail="assignee is required")
-    try:
-        req = service.approvals.assign(approval_id, assignee)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="approval not found") from exc
+    _approval_for_auth(approval_id, auth)
+    req = service.approvals.assign(approval_id, assignee)
     try:
         service.notifications.create(
             recipient_id=assignee,
@@ -132,39 +151,50 @@ def assign_approval(approval_id: str, payload: dict) -> dict:
 
 
 @router.get("/approvals")
-def list_approvals(status: str = "pending", assignee: Optional[str] = None) -> dict:
+def list_approvals(request: Request, status: str = "pending", assignee: Optional[str] = None) -> dict:
+    auth = _auth(request)
     if assignee:
         items = service.approvals.list_for_assignee(assignee)
     elif status == "all":
         items = service.approvals.list_all()
     else:
         items = service.approvals.list_pending()
-    return {"approvals": [asdict(r) for r in items]}
+    filtered = []
+    for item in items:
+        trace = service.audit.get_run(item.run_id)
+        if trace is not None and trace.org_id == auth.org_id:
+            filtered.append(item)
+    return {"approvals": [asdict(r) for r in filtered]}
 
 
 @router.get("/memories")
 def list_memories(
+    request: Request,
     org_id: str = "org-1",
     workspace_id: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
 ) -> dict:
     """Return semantic memories with metadata. Supports workspace_id filtering and pagination."""
+    auth = _auth(request)
     entries = service.memory.list_semantic(
-        org_id, workspace_id=workspace_id, limit=limit, offset=offset
+        auth.org_id, workspace_id=workspace_id, limit=limit, offset=offset
     )
     # Normalize value to string for display
     for e in entries:
         if not isinstance(e.get("value"), str):
             e["value"] = str(e["value"])
-    return {"org_id": org_id, "memories": entries, "count": len(entries)}
+    return {"org_id": auth.org_id, "memories": entries, "count": len(entries)}
 
 
 @router.delete("/memories/{org_id}/{key}")
-def delete_memory(org_id: str, key: str) -> dict:
+def delete_memory(org_id: str, key: str, request: Request) -> dict:
     """Remove a single semantic memory entry from both in-memory and durable store."""
+    auth = _auth(request)
+    if org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="memory not found")
     # Remove from in-memory store
-    store = service.memory._semantic_by_org.get(org_id, {})
+    store = service.memory._semantic_by_org.get(auth.org_id, {})
     store.pop(key, None)
     # Remove from SQLite if repository is present
     if service.memory._repository is not None:
@@ -172,7 +202,7 @@ def delete_memory(org_id: str, key: str) -> dict:
             with service.memory._repository._connect() as conn:
                 conn.execute(
                     "DELETE FROM semantic_memories WHERE org_id = ? AND memory_key = ?",
-                    (org_id, key),
+                    (auth.org_id, key),
                 )
         except Exception:
             pass
@@ -180,19 +210,25 @@ def delete_memory(org_id: str, key: str) -> dict:
 
 
 @router.get("/memories/search")
-def search_memories(org_id: str, q: str) -> dict:
-    return service.memory.search(org_id=org_id, query=q)
+def search_memories(request: Request, org_id: str, q: str) -> dict:
+    auth = _auth(request)
+    if org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="memory not found")
+    return service.memory.search(org_id=auth.org_id, query=q)
 
 
 @router.get("/memories/candidates")
-def list_memory_candidates(org_id: str = "org-1") -> dict:
+def list_memory_candidates(request: Request, org_id: str = "org-1") -> dict:
     """Return unreviewed memory candidates pending approval."""
-    candidates = service.memory.list_candidates(org_id)
-    return {"org_id": org_id, "candidates": candidates, "count": len(candidates)}
+    auth = _auth(request)
+    candidates = service.memory.list_candidates(auth.org_id)
+    return {"org_id": auth.org_id, "candidates": candidates, "count": len(candidates)}
 
 
 @router.post("/memories/candidates/promote")
-def promote_memory_candidate(payload: PromoteCandidatePayload) -> dict:
+def promote_memory_candidate(payload: PromoteCandidatePayload, request: Request) -> dict:
+    auth = _auth(request)
+    _candidate_for_auth(payload.candidate_id, auth)
     try:
         return service.memory.promote_candidate(payload.candidate_id, approved=payload.approved)
     except KeyError as exc:

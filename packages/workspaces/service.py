@@ -174,6 +174,12 @@ class WorkspaceService:
             ).fetchone()
         return self._row_to_workspace(row) if row else None
 
+    def get_for_org(self, workspace_id: str, org_id: str) -> Workspace | None:
+        workspace = self.get(workspace_id)
+        if workspace is None or workspace.org_id != org_id:
+            return None
+        return workspace
+
     def get_by_slug(self, org_id: str, slug: str) -> Workspace | None:
         with sqlite3.connect(self._db_path) as conn:
             conn.row_factory = sqlite3.Row
@@ -205,6 +211,11 @@ class WorkspaceService:
             conn.execute(f"UPDATE workspaces SET {set_clause} WHERE workspace_id = ?", values)
         return self.get(workspace_id)
 
+    def update_for_org(self, workspace_id: str, org_id: str, **kwargs: Any) -> Workspace | None:
+        if self.get_for_org(workspace_id, org_id) is None:
+            return None
+        return self.update(workspace_id, **kwargs)
+
     def archive(self, workspace_id: str) -> None:
         now = datetime.utcnow().isoformat() + "Z"
         with sqlite3.connect(self._db_path) as conn:
@@ -212,6 +223,12 @@ class WorkspaceService:
                 "UPDATE workspaces SET archived = 1, updated_at = ? WHERE workspace_id = ?",
                 (now, workspace_id)
             )
+
+    def archive_for_org(self, workspace_id: str, org_id: str) -> bool:
+        if self.get_for_org(workspace_id, org_id) is None:
+            return False
+        self.archive(workspace_id)
+        return True
 
     # ---- Members ----
     def add_member(self, workspace_id: str, user_id: str, role: str = "editor") -> WorkspaceMember:
@@ -228,12 +245,23 @@ class WorkspaceService:
             )
         return member
 
+    def add_member_for_org(self, workspace_id: str, org_id: str, user_id: str, role: str = "editor") -> WorkspaceMember | None:
+        if self.get_for_org(workspace_id, org_id) is None:
+            return None
+        return self.add_member(workspace_id, user_id, role)
+
     def remove_member(self, workspace_id: str, user_id: str) -> None:
         with sqlite3.connect(self._db_path) as conn:
             conn.execute(
                 "DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
                 (workspace_id, user_id)
             )
+
+    def remove_member_for_org(self, workspace_id: str, org_id: str, user_id: str) -> bool:
+        if self.get_for_org(workspace_id, org_id) is None:
+            return False
+        self.remove_member(workspace_id, user_id)
+        return True
 
     def list_members(self, workspace_id: str) -> list[WorkspaceMember]:
         with sqlite3.connect(self._db_path) as conn:
@@ -246,6 +274,11 @@ class WorkspaceService:
             member_id=r["member_id"], workspace_id=r["workspace_id"],
             user_id=r["user_id"], role=r["role"], joined_at=r["joined_at"]
         ) for r in rows]
+
+    def list_members_for_org(self, workspace_id: str, org_id: str) -> list[WorkspaceMember]:
+        if self.get_for_org(workspace_id, org_id) is None:
+            return []
+        return self.list_members(workspace_id)
 
     # ---- Entity Links ----
     def link_entity(self, workspace_id: str, entity_type: str, entity_id: str) -> WorkspaceLink:
@@ -261,6 +294,11 @@ class WorkspaceService:
                 (link.link_id, link.workspace_id, link.entity_type, link.entity_id, link.created_at)
             )
         return link
+
+    def link_entity_for_org(self, workspace_id: str, org_id: str, entity_type: str, entity_id: str) -> WorkspaceLink | None:
+        if self.get_for_org(workspace_id, org_id) is None:
+            return None
+        return self.link_entity(workspace_id, entity_type, entity_id)
 
     def unlink_entity(self, workspace_id: str, entity_type: str, entity_id: str) -> None:
         with sqlite3.connect(self._db_path) as conn:
@@ -287,6 +325,11 @@ class WorkspaceService:
             entity_type=r["entity_type"], entity_id=r["entity_id"],
             created_at=r["created_at"]
         ) for r in rows]
+
+    def list_linked_for_org(self, workspace_id: str, org_id: str, entity_type: str | None = None) -> list[WorkspaceLink]:
+        if self.get_for_org(workspace_id, org_id) is None:
+            return []
+        return self.list_linked(workspace_id, entity_type)
 
     def get_context_summary(self, workspace_id: str) -> str:
         """Build text summary for LLM injection."""

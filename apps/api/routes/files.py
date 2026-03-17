@@ -44,6 +44,20 @@ class BrandUpdatePayload(BaseModel):
     voice_tone: Optional[str] = None
 
 
+def _stored_file_for_auth(file_id: str, auth: AuthContext):
+    meta = service.storage.get_metadata(file_id)
+    if meta is None or meta.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="File not found")
+    return meta
+
+
+def _template_for_auth(template_id: str, auth: AuthContext) -> dict:
+    template = service.templates.get(template_id)
+    if template is None or template.org_id not in {auth.org_id, "__system__"}:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return template.to_dict()
+
+
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)) -> dict:
     """Extract text from an uploaded file and return a context_id.
@@ -194,14 +208,17 @@ async def upload_file(file: UploadFile = File(...)) -> dict:
 
 
 @router.get("/files")
-def list_files(org_id: str = "org-1") -> list[dict]:
-    return [f.to_dict() for f in service.storage.list_files(org_id=org_id)]
+def list_files(request: Request, org_id: str = "org-1") -> list[dict]:
+    auth = _auth(request)
+    return [f.to_dict() for f in service.storage.list_files(org_id=auth.org_id)]
 
 
 @router.get("/files/{file_id}")
-def download_file(file_id: str):
+def download_file(file_id: str, request: Request):
+    auth = _auth(request)
     try:
-        meta, content = service.storage.retrieve(file_id)
+        _stored_file_for_auth(file_id, auth)
+        meta, _content = service.storage.retrieve(file_id)
     except (KeyError, FileNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return FileResponse(
@@ -212,28 +229,31 @@ def download_file(file_id: str):
 
 
 @router.delete("/files/{file_id}", status_code=204)
-def delete_file(file_id: str) -> None:
+def delete_file(file_id: str, request: Request) -> None:
+    auth = _auth(request)
+    _stored_file_for_auth(file_id, auth)
     service.storage.delete(file_id)
 
 
 @router.post("/documents/generate")
-def generate_document(payload: DocGenPayload) -> dict:
+def generate_document(payload: DocGenPayload, request: Request) -> dict:
+    auth = _auth(request)
     if service.docgen is None:
         raise HTTPException(status_code=501, detail="Document generation not available. Install python-docx, python-pptx, openpyxl.")
     from packages.docgen.generators.base import DocumentContent, DocumentSection
 
-    brand = service.brand.get_brand_or_default(payload.org_id).to_dict()
+    brand = service.brand.get_brand_or_default(auth.org_id).to_dict()
 
     # Template-based generation
     if payload.template_id:
         tpl = service.templates.get(payload.template_id)
-        if tpl is None:
+        if tpl is None or tpl.org_id not in {auth.org_id, "__system__"}:
             raise HTTPException(status_code=404, detail="Template not found")
         data = {**payload.metadata, "title": payload.title}
         if payload.sections:
             data["sections"] = payload.sections
         stored = service.docgen._generate_from_template_obj(
-            tpl, data, org_id=payload.org_id, brand=brand, workspace_id=payload.workspace_id
+            tpl, data, org_id=auth.org_id, brand=brand, workspace_id=payload.workspace_id
         )
         return stored.to_dict()
 
@@ -249,15 +269,21 @@ def generate_document(payload: DocGenPayload) -> dict:
         content,
         format=payload.format,
         brand=brand,
-        org_id=payload.org_id,
+        org_id=auth.org_id,
         workspace_id=payload.workspace_id,
     )
     return stored.to_dict()
 
 
 @router.get("/documents")
-def list_documents(org_id: str = "org-1", workspace_id: Optional[str] = None, q: Optional[str] = None) -> list[dict]:
-    files = service.storage.list_files(org_id=org_id)
+def list_documents(
+    request: Request,
+    org_id: str = "org-1",
+    workspace_id: Optional[str] = None,
+    q: Optional[str] = None,
+) -> list[dict]:
+    auth = _auth(request)
+    files = service.storage.list_files(org_id=auth.org_id)
     results = [f.to_dict() for f in files if f.metadata.get("format") in ("docx", "pptx", "xlsx", "pdf")]
     if workspace_id:
         results = [r for r in results if r.get("metadata", {}).get("workspace_id") == workspace_id]
@@ -268,24 +294,25 @@ def list_documents(org_id: str = "org-1", workspace_id: Optional[str] = None, q:
 
 
 @router.get("/templates")
-def list_templates(org_id: str = "org-1", category: Optional[str] = None) -> list[dict]:
-    return [t.to_dict() for t in service.templates.list_templates(org_id=org_id, category=category)]
+def list_templates(request: Request, org_id: str = "org-1", category: Optional[str] = None) -> list[dict]:
+    auth = _auth(request)
+    return [t.to_dict() for t in service.templates.list_templates(org_id=auth.org_id, category=category)]
 
 
 @router.get("/templates/{template_id}")
-def get_template(template_id: str) -> dict:
-    t = service.templates.get(template_id)
-    if t is None:
-        raise HTTPException(status_code=404, detail="Template not found")
-    return t.to_dict()
+def get_template(template_id: str, request: Request) -> dict:
+    auth = _auth(request)
+    return _template_for_auth(template_id, auth)
 
 
 @router.get("/brand")
-def get_brand(org_id: str = "org-1") -> dict:
-    return service.brand.get_brand_or_default(org_id=org_id)
+def get_brand(request: Request, org_id: str = "org-1") -> dict:
+    auth = _auth(request)
+    return service.brand.get_brand_or_default(org_id=auth.org_id)
 
 
 @router.put("/brand")
-def update_brand(payload: BrandUpdatePayload, org_id: str = "org-1") -> dict:
+def update_brand(payload: BrandUpdatePayload, request: Request, org_id: str = "org-1") -> dict:
+    auth = _auth(request)
     changes = {k: v for k, v in payload.model_dump().items() if v is not None}
-    return service.brand.update_brand(org_id=org_id, changes=changes)
+    return service.brand.update_brand(org_id=auth.org_id, changes=changes)

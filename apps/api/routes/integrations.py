@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from apps.api.deps import service
@@ -25,25 +26,28 @@ class SlackPostPayload(BaseModel):
 
 
 @router.get("/credentials")
-def list_credentials(org_id: str = "org-1") -> list[dict]:
-    return [c.to_dict() for c in service.credentials.list_credentials(org_id=org_id)]
+def list_credentials(request: Request, org_id: str = "org-1") -> list[dict]:
+    auth = _auth(request)
+    return [c.to_dict() for c in service.credentials.list_credentials(org_id=auth.org_id)]
 
 
 @router.get("/integrations/status")
-def integration_status(org_id: str = "org-1") -> dict:
+def integration_status(request: Request, org_id: str = "org-1") -> dict:
     """Check which integrations are connected."""
+    auth = _auth(request)
     providers = ["google", "slack", "jira", "linear", "confluence", "notion", "salesforce", "hubspot", "gmail", "outlook"]
-    return {p: service.credentials.has_credential(p, org_id) for p in providers}
+    return {p: service.credentials.has_credential(p, auth.org_id) for p in providers}
 
 
 @router.get("/integrations/slack/status")
-def slack_status(org_id: str = "org-1") -> dict:
+def slack_status(request: Request, org_id: str = "org-1") -> dict:
     """Return Slack connection status for the org, including team/bot metadata."""
-    connected = service.credentials.has_credential("slack", org_id)
+    auth = _auth(request)
+    connected = service.credentials.has_credential("slack", auth.org_id)
     if not connected:
         return {"connected": False}
     try:
-        cred = service.credentials.get_credential("slack", org_id)
+        cred = service.credentials.get_credential("slack", auth.org_id)
         meta = (cred.metadata or {}) if cred else {}
         return {"connected": True, "team": meta.get("team", ""), "bot": meta.get("bot", "")}
     except Exception:
@@ -52,6 +56,7 @@ def slack_status(org_id: str = "org-1") -> dict:
 
 @router.get("/integrations/slack/connect")
 def slack_oauth_connect(
+    request: Request,
     org_id: str = "org-1",
     redirect_uri: str = "http://localhost:8000/integrations/slack/callback",
     frontend_url: str = "http://localhost:3000",
@@ -59,7 +64,7 @@ def slack_oauth_connect(
     """Redirect browser to Slack OAuth authorization URL."""
     import os
     import urllib.parse
-    from fastapi.responses import RedirectResponse
+    auth = _auth(request)
     client_id = os.environ.get("SLACK_CLIENT_ID", "")
     if not client_id:
         # Redirect back to settings with an error rather than raising
@@ -72,7 +77,7 @@ def slack_oauth_connect(
         f"?client_id={client_id}"
         f"&scope={scopes}"
         f"&redirect_uri={urllib.parse.quote(redirect_uri, safe='')}"
-        f"&state={org_id}"
+        f"&state={auth.org_id}"
     )
     return RedirectResponse(url=auth_url)
 
@@ -83,18 +88,17 @@ def slack_oauth_callback(
     state: str = "org-1",
     error: str = "",
     frontend_url: str = "http://localhost:3000",
-) -> "RedirectResponse":
+) -> RedirectResponse:
     """Handle Slack OAuth callback — exchange code for token, persist, redirect to frontend."""
     import os
     import httpx
-    from fastapi.responses import RedirectResponse as _Redirect
     settings_url = f"{frontend_url}/settings"
     if error:
-        return _Redirect(url=f"{settings_url}?error={error}")
+        return RedirectResponse(url=f"{settings_url}?error={error}")
     client_id = os.environ.get("SLACK_CLIENT_ID", "")
     client_secret = os.environ.get("SLACK_CLIENT_SECRET", "")
     if not client_id or not client_secret:
-        return _Redirect(url=f"{settings_url}?error=slack_not_configured")
+        return RedirectResponse(url=f"{settings_url}?error=slack_not_configured")
     try:
         resp = httpx.post(
             "https://slack.com/api/oauth.v2.access",
@@ -103,10 +107,10 @@ def slack_oauth_callback(
         )
         data = resp.json()
     except Exception:
-        return _Redirect(url=f"{settings_url}?error=token_exchange_failed")
+        return RedirectResponse(url=f"{settings_url}?error=token_exchange_failed")
     if not data.get("ok"):
         err_code = data.get("error", "oauth_failed")
-        return _Redirect(url=f"{settings_url}?error={err_code}")
+        return RedirectResponse(url=f"{settings_url}?error={err_code}")
     token: str = data.get("access_token", "")
     team: str = (data.get("team") or {}).get("name", "")
     bot_name: str = (data.get("bot_user_id") or "")
@@ -117,26 +121,28 @@ def slack_oauth_callback(
         )
     except Exception:
         pass
-    return _Redirect(url=f"{settings_url}?slack_oauth=success")
+    return RedirectResponse(url=f"{settings_url}?slack_oauth=success")
 
 
 @router.delete("/integrations/slack/disconnect")
-def slack_disconnect(org_id: str = "org-1") -> dict:
+def slack_disconnect(request: Request, org_id: str = "org-1") -> dict:
     """Remove stored Slack credentials for the org."""
+    auth = _auth(request)
     try:
-        service.credentials.delete_credential("slack", org_id)
+        service.credentials.delete_credential("slack", auth.org_id)
     except Exception:
         pass
     return {"ok": True, "connected": False}
 
 
 @router.post("/integrations/slack/post")
-def slack_post_message(payload: SlackPostPayload) -> dict:
+def slack_post_message(payload: SlackPostPayload, request: Request) -> dict:
     """Post a message to a Slack channel on behalf of the org."""
+    auth = _auth(request)
     token: Optional[str] = None
     try:
-        if service.credentials.has_credential("slack", payload.org_id):
-            cred = service.credentials.get_credential("slack", payload.org_id)
+        if service.credentials.has_credential("slack", auth.org_id):
+            cred = service.credentials.get_credential("slack", auth.org_id)
             token = cred.token if cred else None
     except Exception:
         pass

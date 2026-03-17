@@ -174,6 +174,12 @@ class ProactiveScanner:
         with sqlite3.connect(self._db_path) as conn:
             conn.execute("UPDATE alerts SET acknowledged = 1 WHERE alert_id = ?", (alert_id,))
 
+    def get_alert(self, alert_id: str) -> Alert | None:
+        with sqlite3.connect(self._db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM alerts WHERE alert_id = ?", (alert_id,)).fetchone()
+        return self._row_to_alert(row) if row else None
+
     def _save_alert(self, alert: Alert) -> None:
         import json
         with sqlite3.connect(self._db_path) as conn:

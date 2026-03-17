@@ -169,16 +169,22 @@ def delete_task(task_id: str) -> None:
 
 @router.get("/notifications")
 def list_notifications(
+    request: Request,
     recipient_id: str = "user-1",
     unread_only: bool = False,
     limit: int = 50,
 ) -> list[dict]:
-    return [n.to_dict() for n in service.notifications.list(recipient_id=recipient_id, unread_only=unread_only, limit=limit)]
+    auth = _auth(request)
+    return [
+        n.to_dict()
+        for n in service.notifications.list(recipient_id=auth.user_id, unread_only=unread_only, limit=limit)
+    ]
 
 
 @router.get("/notifications/unread-count")
-def unread_notification_count(recipient_id: str = "user-1") -> dict:
-    return {"count": service.notifications.count_unread(recipient_id)}
+def unread_notification_count(request: Request, recipient_id: str = "user-1") -> dict:
+    auth = _auth(request)
+    return {"count": service.notifications.count_unread(auth.user_id)}
 
 
 @router.post("/notifications", status_code=201)
@@ -195,29 +201,40 @@ def create_notification(payload: NotificationCreate) -> dict:
 
 
 @router.post("/notifications/{notification_id}/read", status_code=204)
-def mark_notification_read(notification_id: str) -> None:
+def mark_notification_read(notification_id: str, request: Request) -> None:
+    auth = _auth(request)
+    notification = service.notifications.get(notification_id)
+    if notification is None or notification.recipient_id != auth.user_id:
+        raise HTTPException(status_code=404, detail="Notification not found")
     service.notifications.mark_read(notification_id)
 
 
 @router.post("/notifications/read-all", status_code=204)
-def mark_all_notifications_read(recipient_id: str = "user-1") -> None:
-    service.notifications.mark_all_read(recipient_id)
+def mark_all_notifications_read(request: Request, recipient_id: str = "user-1") -> None:
+    auth = _auth(request)
+    service.notifications.mark_all_read(auth.user_id)
 
 
 @router.delete("/notifications/{notification_id}", status_code=204)
-def delete_notification(notification_id: str) -> None:
+def delete_notification(notification_id: str, request: Request) -> None:
+    auth = _auth(request)
+    notification = service.notifications.get(notification_id)
+    if notification is None or notification.recipient_id != auth.user_id:
+        raise HTTPException(status_code=404, detail="Notification not found")
     service.notifications.delete(notification_id)
 
 
 @router.get("/activity")
 def list_activity(
+    request: Request,
     org_id: str = "org-1",
     entity_type: Optional[str] = None,
     action_prefix: Optional[str] = None,
     limit: int = 50,
 ) -> list[dict]:
+    auth = _auth(request)
     entries = service.activity.list_for_org(
-        org_id=org_id,
+        org_id=auth.org_id,
         limit=limit,
         entity_type=entity_type,
         action_prefix=action_prefix,
@@ -227,11 +244,14 @@ def list_activity(
 
 @router.get("/activity/{entity_type}/{entity_id}")
 def list_activity_for_entity(
+    request: Request,
     entity_type: str,
     entity_id: str,
     limit: int = 50,
 ) -> list[dict]:
+    auth = _auth(request)
     entries = service.activity.list_for_entity(
+        org_id=auth.org_id,
         entity_type=entity_type,
         entity_id=entity_id,
         limit=limit,

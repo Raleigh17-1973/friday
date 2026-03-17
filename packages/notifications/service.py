@@ -136,6 +136,13 @@ class NotificationService:
         ).fetchone()
         return int(row["n"]) if row else 0
 
+    def get(self, notification_id: str) -> Notification | None:
+        row = self._conn.execute(
+            "SELECT * FROM notifications WHERE notification_id = ?",
+            (notification_id,),
+        ).fetchone()
+        return self._row_to_notif(row) if row else None
+
     # ── Mark read ─────────────────────────────────────────────────────────────
 
     def mark_read(self, notification_id: str) -> bool:

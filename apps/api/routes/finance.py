@@ -68,36 +68,44 @@ class UnitEconomicsPayload(BaseModel):
 
 
 @router.get("/invoices")
-def list_invoices(org_id: str = "org-1") -> list[dict]:
-    return [i.to_dict() for i in service.invoices.list_invoices(org_id=org_id)]
+def list_invoices(request: Request, org_id: str = "org-1") -> list[dict]:
+    auth = _auth(request)
+    return [i.to_dict() for i in service.invoices.list_invoices(org_id=auth.org_id)]
 
 
 @router.post("/invoices", status_code=201)
-def create_invoice(payload: InvoiceCreatePayload) -> dict:
+def create_invoice(payload: InvoiceCreatePayload, request: Request) -> dict:
+    auth = _auth(request)
     from packages.finance.invoice_service import InvoiceItem
     items = [InvoiceItem(description=i.description, quantity=i.quantity, unit_price=i.unit_price)
              for i in payload.items]
     inv = service.invoices.create_invoice(
         client_name=payload.client_name, client_address=payload.client_address,
-        items=items, tax_rate=payload.tax_rate, due_date=payload.due_date, org_id=payload.org_id)
+        items=items, tax_rate=payload.tax_rate, due_date=payload.due_date, org_id=auth.org_id)
     return inv.to_dict()
 
 
 @router.get("/budget/status")
-def budget_status(org_id: str = "org-1") -> list[dict]:
-    return service.budgets.budget_status(org_id=org_id)
+def budget_status(request: Request, org_id: str = "org-1") -> list[dict]:
+    auth = _auth(request)
+    return service.budgets.budget_status(org_id=auth.org_id)
 
 
 @router.post("/budget/categories", status_code=201)
-def create_budget_category(payload: BudgetCategoryPayload) -> dict:
+def create_budget_category(payload: BudgetCategoryPayload, request: Request) -> dict:
+    auth = _auth(request)
     cat = service.budgets.create_category(
         name=payload.name, planned_amount=payload.planned_amount,
-        period=payload.period, org_id=payload.org_id)
+        period=payload.period, org_id=auth.org_id)
     return cat.to_dict()
 
 
 @router.post("/budget/expenses", status_code=201)
-def record_expense(payload: ExpensePayload) -> dict:
+def record_expense(payload: ExpensePayload, request: Request) -> dict:
+    auth = _auth(request)
+    category = service.budgets.get_category(payload.category_id)
+    if category is None or category.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="Budget category not found")
     exp = service.budgets.record_expense(
         category_id=payload.category_id, amount=payload.amount, description=payload.description)
     return exp.to_dict()

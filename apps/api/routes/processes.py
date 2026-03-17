@@ -18,6 +18,21 @@ def _auth(request: Request) -> AuthContext:
     )
 
 
+def _process_for_auth(process_id: str, auth: AuthContext):
+    doc = service.processes.get(process_id)
+    if doc is None or doc.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="Process not found")
+    return doc
+
+
+def _run_for_auth(run_id: str, auth: AuthContext) -> dict:
+    run = service.processes._repo.get_execution_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Execution run not found")
+    _process_for_auth(run["process_id"], auth)
+    return run
+
+
 class ProcessCreatePayload(BaseModel):
     org_id: str = "org-1"
     process_name: str
@@ -52,18 +67,20 @@ class ProcessUpdatePayload(BaseModel):
 
 
 @router.get("/processes")
-def list_processes(org_id: str = "org-1") -> list[dict]:
-    docs = service.processes.list(org_id=org_id)
+def list_processes(request: Request, org_id: str = "org-1") -> list[dict]:
+    auth = _auth(request)
+    docs = service.processes.list(org_id=auth.org_id)
     return [d.to_dict() for d in docs]
 
 
 @router.post("/processes", status_code=201)
-def create_process(payload: ProcessCreatePayload) -> dict:
+def create_process(payload: ProcessCreatePayload, request: Request) -> dict:
     from packages.common.models import ProcessDocument, ProcessStep
+    auth = _auth(request)
     steps = [ProcessStep(**s) if isinstance(s, dict) else s for s in payload.steps]
     doc = ProcessDocument(
         id="",
-        org_id=payload.org_id,
+        org_id=auth.org_id,
         process_name=payload.process_name,
         trigger=payload.trigger,
         steps=steps,
@@ -82,20 +99,21 @@ def create_process(payload: ProcessCreatePayload) -> dict:
 
 
 @router.get("/processes/analytics")
-def process_analytics(org_id: str = "org-1") -> dict:
-    return service.process_analytics.org_health(org_id=org_id)
+def process_analytics(request: Request, org_id: str = "org-1") -> dict:
+    auth = _auth(request)
+    return service.process_analytics.org_health(org_id=auth.org_id)
 
 
 @router.get("/processes/{process_id}")
-def get_process(process_id: str) -> dict:
-    doc = service.processes.get(process_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="Process not found")
+def get_process(process_id: str, request: Request) -> dict:
+    auth = _auth(request)
+    doc = _process_for_auth(process_id, auth)
     return doc.to_dict()
 
 
 @router.put("/processes/{process_id}")
-def update_process(process_id: str, payload: ProcessUpdatePayload) -> dict:
+def update_process(process_id: str, payload: ProcessUpdatePayload, request: Request) -> dict:
+    auth = _auth(request)
     changes: dict = {}
     for field in ("process_name", "trigger", "steps", "decision_points",
                   "roles", "tools", "exceptions", "kpis",
@@ -106,11 +124,12 @@ def update_process(process_id: str, payload: ProcessUpdatePayload) -> dict:
     if not changes:
         raise HTTPException(status_code=400, detail="No changes provided")
     try:
+        _process_for_auth(process_id, auth)
         result = service.processes.update(
             process_id,
             changes=changes,
             bump=payload.bump,
-            author=payload.author,
+            author=auth.user_id,
             changelog_entry=payload.changelog_entry,
         )
         # Major bump held for approval — return 202 Accepted with pending payload
@@ -122,39 +141,37 @@ def update_process(process_id: str, payload: ProcessUpdatePayload) -> dict:
 
 
 @router.delete("/processes/{process_id}", status_code=204)
-def delete_process(process_id: str) -> None:
-    doc = service.processes.get(process_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="Process not found")
+def delete_process(process_id: str, request: Request) -> None:
+    auth = _auth(request)
+    _process_for_auth(process_id, auth)
     service.processes.delete(process_id)
 
 
 @router.get("/processes/{process_id}/history")
-def process_history(process_id: str) -> list[dict]:
-    doc = service.processes.get(process_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="Process not found")
+def process_history(process_id: str, request: Request) -> list[dict]:
+    auth = _auth(request)
+    _process_for_auth(process_id, auth)
     return service.processes.history(process_id)
 
 
 @router.get("/processes/{process_id}/versions/{version}")
-def get_process_version(process_id: str, version: str) -> dict:
+def get_process_version(process_id: str, version: str, request: Request) -> dict:
+    auth = _auth(request)
     doc = service.processes.get_version(process_id, version)
-    if doc is None:
+    if doc is None or doc.org_id != auth.org_id:
         raise HTTPException(status_code=404, detail="Version not found")
     return doc.to_dict()
 
 
 @router.get("/processes/{process_id}/completeness")
-def process_completeness(process_id: str) -> dict:
-    doc = service.processes.get(process_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="Process not found")
+def process_completeness(process_id: str, request: Request) -> dict:
+    auth = _auth(request)
+    doc = _process_for_auth(process_id, auth)
     return service.processes.completeness_breakdown(doc)
 
 
 @router.get("/processes/{process_id}/diagram")
-def process_diagram(process_id: str) -> dict:
+def process_diagram(process_id: str, request: Request) -> dict:
     """Return a Mermaid flowchart for this process.
 
     Uses the stored mermaid_flowchart if it exists; otherwise auto-generates
@@ -162,33 +179,38 @@ def process_diagram(process_id: str) -> dict:
     Returns: {mermaid: str, source: "stored"|"generated"|"none"}
     """
     try:
+        auth = _auth(request)
+        _process_for_auth(process_id, auth)
         return service.processes.generate_mermaid(process_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Process not found")
 
 
 @router.post("/processes/{process_id}/runs", status_code=201)
-def start_process_execution(process_id: str, actor: str = "user") -> dict:
+def start_process_execution(process_id: str, request: Request, actor: str = "user") -> dict:
     """Start a new execution run for a process. Returns the run record."""
     try:
-        return service.processes.start_execution(process_id, actor=actor)
+        auth = _auth(request)
+        _process_for_auth(process_id, auth)
+        return service.processes.start_execution(process_id, actor=auth.user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Process not found")
 
 
 @router.get("/processes/{process_id}/runs")
-def list_process_executions(process_id: str) -> list[dict]:
+def list_process_executions(process_id: str, request: Request) -> list[dict]:
     """List all execution runs for a process, newest first."""
-    doc = service.processes.get(process_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="Process not found")
+    auth = _auth(request)
+    _process_for_auth(process_id, auth)
     return service.processes.list_executions(process_id)
 
 
 @router.post("/processes/runs/{run_id}/advance")
-def advance_process_step(run_id: str) -> dict:
+def advance_process_step(run_id: str, request: Request) -> dict:
     """Advance an in-progress execution run to the next step."""
     try:
+        auth = _auth(request)
+        _run_for_auth(run_id, auth)
         return service.processes.advance_step(run_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Execution run not found")
@@ -197,26 +219,27 @@ def advance_process_step(run_id: str) -> dict:
 
 
 @router.post("/processes/runs/{run_id}/complete")
-def complete_process_execution(run_id: str) -> dict:
+def complete_process_execution(run_id: str, request: Request) -> dict:
     """Mark an execution run as completed."""
     try:
+        auth = _auth(request)
+        _run_for_auth(run_id, auth)
         return service.processes.complete_execution(run_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Execution run not found")
 
 
 @router.get("/processes/{process_id}/export")
-def export_process(process_id: str, format: str = "docx", org_id: str = "org-1") -> dict:
+def export_process(process_id: str, request: Request, format: str = "docx", org_id: str = "org-1") -> dict:
     """Export a process as a branded document. Returns {download_url, file_id, filename}."""
+    auth = _auth(request)
     if service.docgen is None:
         raise HTTPException(status_code=501, detail="Document generation not available.")
     from packages.docgen.generators.base import DocumentContent, DocumentSection
 
-    proc = service.processes.get(process_id)
-    if proc is None:
-        raise HTTPException(status_code=404, detail="Process not found")
+    proc = _process_for_auth(process_id, auth)
 
-    brand = service.brand.get_brand_or_default(org_id).to_dict()
+    brand = service.brand.get_brand_or_default(auth.org_id).to_dict()
     sections: list[DocumentSection] = []
 
     # Overview
@@ -279,9 +302,9 @@ def export_process(process_id: str, format: str = "docx", org_id: str = "org-1")
         title=proc.process_name,
         document_type=doc_type,
         sections=sections,
-        metadata={"author": brand.get("company_name", ""), "org_id": org_id},
+        metadata={"author": brand.get("company_name", ""), "org_id": auth.org_id},
     )
     stored = service.docgen.generate(
-        content, format=format, brand=brand, org_id=org_id, created_by="friday-export"
+        content, format=format, brand=brand, org_id=auth.org_id, created_by="friday-export"
     )
     return {"file_id": stored.file_id, "filename": stored.filename, "download_url": f"/files/{stored.file_id}"}

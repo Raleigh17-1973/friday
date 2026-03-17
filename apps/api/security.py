@@ -93,6 +93,22 @@ def resolve_auth(request: Request) -> AuthContext | None:
     return _API_KEY_STORE.get(api_key)  # None means invalid key → 401
 
 
+def current_auth(request: Request) -> AuthContext:
+    """Return resolved auth context, falling back to the dev context when auth is disabled."""
+    auth = getattr(request.state, "auth", None)
+    if auth is not None:
+        return auth
+    return _DEV_CONTEXT
+
+
+def current_org_id(request: Request) -> str:
+    return current_auth(request).org_id
+
+
+def current_user_id(request: Request) -> str:
+    return current_auth(request).user_id
+
+
 # ── Admin auth ────────────────────────────────────────────────────────────────
 
 class AdminAuth:

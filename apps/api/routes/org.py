@@ -76,16 +76,18 @@ class DecisionPayload(BaseModel):
 
 
 @router.get("/org/profile")
-def get_org_profile(org_id: str = "org-1") -> dict:
-    p = service.org_context.get_profile(org_id)
+def get_org_profile(request: Request, org_id: str = "org-1") -> dict:
+    auth = _auth(request)
+    p = service.org_context.get_profile(auth.org_id)
     return asdict(p) if p else {}
 
 
 @router.put("/org/profile")
-def upsert_org_profile(payload: OrgProfilePayload) -> dict:
+def upsert_org_profile(payload: OrgProfilePayload, request: Request) -> dict:
     from packages.org_context import OrgProfile
+    auth = _auth(request)
     profile = OrgProfile(
-        org_id=payload.org_id, company_name=payload.company_name,
+        org_id=auth.org_id, company_name=payload.company_name,
         industry=payload.industry, stage=payload.stage,
         fiscal_year_end=payload.fiscal_year_end, headcount=payload.headcount,
         founded_year=payload.founded_year, mission=payload.mission,
@@ -94,55 +96,63 @@ def upsert_org_profile(payload: OrgProfilePayload) -> dict:
 
 
 @router.get("/org/people")
-def list_people(org_id: str = "org-1", department: Optional[str] = None) -> list[dict]:
-    return [asdict(p) for p in service.org_context.list_people(org_id, department)]
+def list_people(request: Request, org_id: str = "org-1", department: Optional[str] = None) -> list[dict]:
+    auth = _auth(request)
+    return [asdict(p) for p in service.org_context.list_people(auth.org_id, department)]
 
 
 @router.post("/org/people", status_code=201)
-def add_person(payload: PersonPayload) -> dict:
+def add_person(payload: PersonPayload, request: Request) -> dict:
     from packages.org_context import Person
     from uuid import uuid4
+    auth = _auth(request)
     p = Person(person_id=f"person_{uuid4().hex[:12]}", name=payload.name,
                 role=payload.role, department=payload.department,
-                email=payload.email, reports_to=payload.reports_to, org_id=payload.org_id)
+                email=payload.email, reports_to=payload.reports_to, org_id=auth.org_id)
     return asdict(service.org_context.upsert_person(p))
 
 
 @router.get("/org/chart")
-def org_chart(org_id: str = "org-1") -> dict:
-    return service.org_context.org_chart(org_id)
+def org_chart(request: Request, org_id: str = "org-1") -> dict:
+    auth = _auth(request)
+    return service.org_context.org_chart(auth.org_id)
 
 
 @router.get("/org/priorities")
-def list_priorities(org_id: str = "org-1") -> list[dict]:
-    return [asdict(p) for p in service.org_context.list_priorities(org_id)]
+def list_priorities(request: Request, org_id: str = "org-1") -> list[dict]:
+    auth = _auth(request)
+    return [asdict(p) for p in service.org_context.list_priorities(auth.org_id)]
 
 
 @router.post("/org/priorities", status_code=201)
-def add_priority(payload: PriorityPayload) -> dict:
+def add_priority(payload: PriorityPayload, request: Request) -> dict:
+    auth = _auth(request)
     return asdict(service.org_context.add_priority(
         title=payload.title, description=payload.description,
         owner=payload.owner, due_date=payload.due_date,
-        org_id=payload.org_id, tags=payload.tags))
+        org_id=auth.org_id, tags=payload.tags))
 
 
 @router.get("/meetings")
-def list_meetings(org_id: str = "org-1", status: Optional[str] = None) -> list[dict]:
-    return [asdict(m) for m in service.meetings.list_meetings(org_id=org_id, status=status)]
+def list_meetings(request: Request, org_id: str = "org-1", status: Optional[str] = None) -> list[dict]:
+    auth = _auth(request)
+    return [asdict(m) for m in service.meetings.list_meetings(org_id=auth.org_id, status=status)]
 
 
 @router.post("/meetings", status_code=201)
-def create_meeting(payload: MeetingCreatePayload) -> dict:
+def create_meeting(payload: MeetingCreatePayload, request: Request) -> dict:
+    auth = _auth(request)
     m = service.meetings.create_meeting(
         title=payload.title, scheduled_at=payload.scheduled_at,
         attendees=payload.attendees, agenda=payload.agenda,
-        duration_minutes=payload.duration_minutes, org_id=payload.org_id)
+        duration_minutes=payload.duration_minutes, org_id=auth.org_id)
     return asdict(m)
 
 
 @router.post("/meetings/{meeting_id}/notes", status_code=201)
-def process_meeting_notes(meeting_id: str, payload: MeetingNotesPayload) -> dict:
-    note = service.meetings.process_notes(meeting_id, payload.raw_text, org_id=payload.org_id)
+def process_meeting_notes(meeting_id: str, payload: MeetingNotesPayload, request: Request) -> dict:
+    auth = _auth(request)
+    note = service.meetings.process_notes(meeting_id, payload.raw_text, org_id=auth.org_id)
     result = asdict(note)
     result["action_items"] = [asdict(a) for a in note.action_items]
 
@@ -180,8 +190,14 @@ def process_meeting_notes(meeting_id: str, payload: MeetingNotesPayload) -> dict
 
 
 @router.get("/meetings/action-items")
-def list_action_items(org_id: str = "org-1", status: str = "open", owner: Optional[str] = None) -> list[dict]:
-    return [asdict(a) for a in service.meetings.list_action_items(org_id=org_id, status=status, owner=owner)]
+def list_action_items(
+    request: Request,
+    org_id: str = "org-1",
+    status: str = "open",
+    owner: Optional[str] = None,
+) -> list[dict]:
+    auth = _auth(request)
+    return [asdict(a) for a in service.meetings.list_action_items(org_id=auth.org_id, status=status, owner=owner)]
 
 
 @router.post("/meetings/action-items/{item_id}/complete")
@@ -191,22 +207,25 @@ def complete_action_item(item_id: str) -> dict:
 
 
 @router.get("/decisions")
-def list_decisions(org_id: str = "org-1", tag: Optional[str] = None) -> list[dict]:
-    return [asdict(d) for d in service.decisions.list_decisions(org_id, tag=tag)]
+def list_decisions(request: Request, org_id: str = "org-1", tag: Optional[str] = None) -> list[dict]:
+    auth = _auth(request)
+    return [asdict(d) for d in service.decisions.list_decisions(auth.org_id, tag=tag)]
 
 
 @router.post("/decisions", status_code=201)
-def log_decision(payload: DecisionPayload) -> dict:
+def log_decision(payload: DecisionPayload, request: Request) -> dict:
+    auth = _auth(request)
     return asdict(service.decisions.log(
         title=payload.title, context=payload.context, rationale=payload.rationale,
         owner=payload.owner, options_considered=payload.options_considered,
-        org_id=payload.org_id, tags=payload.tags, reversibility=payload.reversibility,
+        org_id=auth.org_id, tags=payload.tags, reversibility=payload.reversibility,
         confidence=payload.confidence, related_run_id=payload.related_run_id))
 
 
 @router.get("/decisions/search")
-def search_decisions(q: str, org_id: str = "org-1") -> list[dict]:
-    return [asdict(d) for d in service.decisions.search(q, org_id)]
+def search_decisions(request: Request, q: str, org_id: str = "org-1") -> list[dict]:
+    auth = _auth(request)
+    return [asdict(d) for d in service.decisions.search(q, auth.org_id)]
 
 
 @router.post("/decisions/{decision_id}/outcome")
