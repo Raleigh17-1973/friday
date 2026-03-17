@@ -6,6 +6,8 @@ import {
   BarChart2,
   Bell,
   CheckSquare,
+  ChevronDown,
+  ChevronRight,
   ClipboardCheck,
   FileText,
   Folders,
@@ -91,6 +93,21 @@ export function PageShell({
   const [currentPath, setCurrentPath] = React.useState("");
   const [userRole, setUserRole] = React.useState<UserRole>("member");
   const [unreadCount, setUnreadCount] = React.useState(0);
+  // Track manually collapsed sections; by default sections auto-open when active
+  const [collapsedSections, setCollapsedSections] = React.useState<Set<string>>(new Set());
+
+  function toggleSection(href: string, isSectionActive: boolean) {
+    setCollapsedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(href)) {
+        next.delete(href);
+      } else {
+        // If we're collapsing the currently-active section, add it; otherwise it was never open
+        next.add(href);
+      }
+      return next;
+    });
+  }
   const BACKEND_URL = process.env.NEXT_PUBLIC_FRIDAY_BACKEND_URL ?? "http://127.0.0.1:8000";
 
   React.useEffect(() => {
@@ -154,30 +171,83 @@ export function PageShell({
         {NAV_ITEMS.filter(({ roles }) => !roles || roles.includes(userRole)).map(({ href, icon: Icon, label, children }) => {
           const isActive = href === "/" ? currentPath === "/" : currentPath === href || currentPath.startsWith(href + "/") || currentPath === href;
           const isSectionActive = children ? currentPath.startsWith(href) : false;
+          // Children are visible when section is active AND not manually collapsed
+          const isExpanded = children && (isSectionActive || false) && !collapsedSections.has(href);
+          const hasChildren = !!children;
+
           return (
             <React.Fragment key={href}>
-              <Link
-                href={href}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "0.625rem",
-                  padding: "0.5rem 1rem",
-                  fontSize: "0.875rem",
-                  fontWeight: isActive ? 600 : 400,
-                  color: isActive ? "var(--accent)" : "var(--text-muted)",
-                  background: isActive ? "rgba(var(--accent-rgb, 99,102,241), 0.08)" : "transparent",
-                  borderRadius: "0.375rem",
-                  margin: "0 0.5rem",
-                  textDecoration: "none",
-                  transition: "background 0.15s, color 0.15s",
-                }}
-              >
-                <Icon size={16} strokeWidth={1.75} aria-hidden="true" color={isActive ? "var(--accent)" : "var(--text-muted)"} />
-                {label}
-              </Link>
-              {/* Nested children — always visible when section is active */}
-              {children && isSectionActive && children.map(child => {
+              {hasChildren ? (
+                /* Parent with children — row = icon + label + chevron toggle */
+                <div style={{ display: "flex", alignItems: "center", margin: "0 0.5rem", borderRadius: "0.375rem", background: isActive ? "rgba(var(--accent-rgb, 99,102,241), 0.08)" : "transparent" }}>
+                  <Link
+                    href={href}
+                    style={{
+                      flex: 1,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.625rem",
+                      padding: "0.5rem 0.5rem 0.5rem 1rem",
+                      fontSize: "0.875rem",
+                      fontWeight: isActive ? 600 : 400,
+                      color: isActive ? "var(--accent)" : "var(--text-muted)",
+                      textDecoration: "none",
+                      transition: "color 0.15s",
+                    }}
+                  >
+                    <Icon size={16} strokeWidth={1.75} aria-hidden="true" color={isActive ? "var(--accent)" : "var(--text-muted)"} />
+                    {label}
+                  </Link>
+                  {/* Chevron toggle button */}
+                  <button
+                    onClick={() => toggleSection(href, isSectionActive)}
+                    aria-label={isExpanded ? "Collapse" : "Expand"}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: "28px",
+                      height: "28px",
+                      border: "none",
+                      background: "transparent",
+                      cursor: "pointer",
+                      color: isActive ? "var(--accent)" : "var(--text-muted)",
+                      borderRadius: "0.25rem",
+                      flexShrink: 0,
+                      marginRight: "0.25rem",
+                      transition: "color 0.15s",
+                    }}
+                  >
+                    {isExpanded
+                      ? <ChevronDown size={13} strokeWidth={2} />
+                      : <ChevronRight size={13} strokeWidth={2} />
+                    }
+                  </button>
+                </div>
+              ) : (
+                <Link
+                  href={href}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.625rem",
+                    padding: "0.5rem 1rem",
+                    fontSize: "0.875rem",
+                    fontWeight: isActive ? 600 : 400,
+                    color: isActive ? "var(--accent)" : "var(--text-muted)",
+                    background: isActive ? "rgba(var(--accent-rgb, 99,102,241), 0.08)" : "transparent",
+                    borderRadius: "0.375rem",
+                    margin: "0 0.5rem",
+                    textDecoration: "none",
+                    transition: "background 0.15s, color 0.15s",
+                  }}
+                >
+                  <Icon size={16} strokeWidth={1.75} aria-hidden="true" color={isActive ? "var(--accent)" : "var(--text-muted)"} />
+                  {label}
+                </Link>
+              )}
+              {/* Nested children — visible when expanded */}
+              {isExpanded && children && children.map(child => {
                 const childActive = currentPath === child.href || currentPath.startsWith(child.href + "/");
                 const ChildIcon = child.icon;
                 return (

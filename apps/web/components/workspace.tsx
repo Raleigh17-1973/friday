@@ -7,6 +7,7 @@ import {
   Bell,
   CheckSquare,
   ChevronDown,
+  ChevronRight,
   ClipboardCheck,
   FileText,
   FlaskConical,
@@ -147,6 +148,15 @@ function LeftRail({
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [userRole, setUserRole] = useState<UserRole>("member");
   const [unreadCount, setUnreadCount] = useState(0);
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+
+  function toggleSection(href: string) {
+    setCollapsedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(href)) { next.delete(href); } else { next.add(href); }
+      return next;
+    });
+  }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -230,16 +240,39 @@ function LeftRail({
         {NAV_ITEMS.filter(({ roles }) => !roles || roles.includes(userRole)).map(({ label, href, icon: Icon, children }) => {
           const isActive = href === "/" ? currentPath === "/" : currentPath === href || currentPath.startsWith(href + "/");
           const isSectionActive = children ? currentPath.startsWith(href) : false;
+          const isExpanded = !!children && isSectionActive && !collapsedSections.has(href);
           return (
             <div key={href}>
-              <a
-                href={href}
-                className={`rail-nav-link${isActive ? " rail-nav-link-active" : ""}`}
-              >
-                <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
-                {label}
-              </a>
-              {children && isSectionActive && children.map(child => {
+              {children ? (
+                <div style={{ display: "flex", alignItems: "center" }}>
+                  <a
+                    href={href}
+                    className={`rail-nav-link${isActive ? " rail-nav-link-active" : ""}`}
+                    style={{ flex: 1 }}
+                  >
+                    <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
+                    {label}
+                  </a>
+                  {isSectionActive && (
+                    <button
+                      onClick={() => toggleSection(href)}
+                      aria-label={isExpanded ? "Collapse" : "Expand"}
+                      style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, border: "none", background: "transparent", cursor: "pointer", color: "var(--text-muted)", flexShrink: 0, marginRight: 4, borderRadius: 4 }}
+                    >
+                      {isExpanded ? <ChevronDown size={12} strokeWidth={2} /> : <ChevronRight size={12} strokeWidth={2} />}
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <a
+                  href={href}
+                  className={`rail-nav-link${isActive ? " rail-nav-link-active" : ""}`}
+                >
+                  <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
+                  {label}
+                </a>
+              )}
+              {isExpanded && children && children.map(child => {
                 const childActive = currentPath === child.href || currentPath.startsWith(child.href + "/");
                 const ChildIcon = child.icon;
                 return (
