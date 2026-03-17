@@ -91,6 +91,18 @@ class BudgetService:
         self._conn.commit()
         return exp
 
+    def get_category(self, category_id: str) -> BudgetCategory | None:
+        row = self._conn.execute(
+            "SELECT category_id, org_id, name, planned_amount, period, created_at FROM budget_categories WHERE category_id = ?",
+            (category_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return BudgetCategory(
+            category_id=row[0], org_id=row[1], name=row[2],
+            planned_amount=row[3], period=row[4], created_at=row[5],
+        )
+
     def budget_status(self, org_id: str = "org-1") -> list[dict]:
         """Get each category's planned, actual, variance, and % used."""
         categories = self.list_categories(org_id)

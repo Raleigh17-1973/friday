@@ -16,12 +16,82 @@ class ApprovalService:
         if db_path is not None:
             db_path.parent.mkdir(parents=True, exist_ok=True)
             self._db = sqlite3.connect(str(db_path), check_same_thread=False)
-            self._db.execute(
-                "CREATE TABLE IF NOT EXISTS approvals ("
-                "approval_id TEXT PRIMARY KEY, run_id TEXT, data TEXT NOT NULL)"
-            )
-            self._db.commit()
+            self._ensure_schema()
             self._load_from_db()
+
+    def _approval_payload(self, req: ApprovalRequest) -> dict:
+        return {
+            "approval_id": req.approval_id,
+            "run_id": req.run_id,
+            "reason": req.reason,
+            "action_summary": req.action_summary,
+            "requested_scopes": req.requested_scopes,
+            "created_at": req.created_at,
+            "status": req.status,
+            "assignee": req.assignee,
+        }
+
+    def _ensure_schema(self) -> None:
+        if self._db is None:
+            return
+        self._db.execute(
+            "CREATE TABLE IF NOT EXISTS approvals ("
+            "approval_id TEXT PRIMARY KEY, run_id TEXT, data TEXT NOT NULL)"
+        )
+        columns = {
+            str(row[1])
+            for row in self._db.execute("PRAGMA table_info(approvals)")
+        }
+        if "data" not in columns:
+            self._db.execute("ALTER TABLE approvals ADD COLUMN data TEXT")
+            columns.add("data")
+
+        legacy_columns = {
+            "approval_id",
+            "run_id",
+            "reason",
+            "action_summary",
+            "requested_scopes",
+            "created_at",
+            "status",
+            "assignee",
+        }
+        if legacy_columns.intersection(columns):
+            select_columns = [name for name in legacy_columns if name in columns]
+            if select_columns:
+                query = (
+                    "SELECT approval_id, run_id, data, "
+                    + ", ".join(select_columns)
+                    + " FROM approvals"
+                )
+                for row in self._db.execute(query):
+                    approval_id = row[0]
+                    run_id = row[1]
+                    data = row[2]
+                    if data:
+                        continue
+                    offset = 3
+                    legacy_data = {
+                        column: row[offset + index]
+                        for index, column in enumerate(select_columns)
+                    }
+                    payload = {
+                        "approval_id": legacy_data.get("approval_id") or approval_id,
+                        "run_id": legacy_data.get("run_id") or run_id or "",
+                        "reason": legacy_data.get("reason") or "",
+                        "action_summary": legacy_data.get("action_summary") or "",
+                        "requested_scopes": json.loads(legacy_data["requested_scopes"])
+                        if isinstance(legacy_data.get("requested_scopes"), str)
+                        else (legacy_data.get("requested_scopes") or []),
+                        "created_at": legacy_data.get("created_at") or "",
+                        "status": legacy_data.get("status") or "pending",
+                        "assignee": legacy_data.get("assignee"),
+                    }
+                    self._db.execute(
+                        "UPDATE approvals SET data = ? WHERE approval_id = ?",
+                        (json.dumps(payload), approval_id),
+                    )
+        self._db.commit()
 
     def _load_from_db(self) -> None:
         if self._db is None:
@@ -44,16 +114,7 @@ class ApprovalService:
     def _persist(self, req: ApprovalRequest) -> None:
         if self._db is None:
             return
-        data = json.dumps({
-            "approval_id": req.approval_id,
-            "run_id": req.run_id,
-            "reason": req.reason,
-            "action_summary": req.action_summary,
-            "requested_scopes": req.requested_scopes,
-            "created_at": req.created_at,
-            "status": req.status,
-            "assignee": req.assignee,
-        })
+        data = json.dumps(self._approval_payload(req))
         self._db.execute(
             "INSERT OR REPLACE INTO approvals (approval_id, run_id, data) VALUES (?, ?, ?)",
             (req.approval_id, req.run_id, data),

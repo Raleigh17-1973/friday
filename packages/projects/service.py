@@ -79,6 +79,12 @@ class ProjectService:
             return None
         return Project(project_id=r[0], workspace_id=r[1], name=r[2], description=r[3], color=r[4], icon=r[5], created_at=r[6])
 
+    def get_for_workspace(self, project_id: str, workspace_id: str) -> Project | None:
+        project = self.get(project_id)
+        if project is None or project.workspace_id != workspace_id:
+            return None
+        return project
+
     def update(self, project_id: str, **kwargs) -> Project | None:
         project = self.get(project_id)
         if project is None:
@@ -94,6 +100,17 @@ class ProjectService:
         self._conn.commit()
         return project
 
+    def update_for_workspace(self, project_id: str, workspace_id: str, **kwargs) -> Project | None:
+        if self.get_for_workspace(project_id, workspace_id) is None:
+            return None
+        return self.update(project_id, **kwargs)
+
     def delete(self, project_id: str) -> None:
         self._conn.execute("DELETE FROM projects WHERE project_id = ?", (project_id,))
         self._conn.commit()
+
+    def delete_for_workspace(self, project_id: str, workspace_id: str) -> bool:
+        if self.get_for_workspace(project_id, workspace_id) is None:
+            return False
+        self.delete(project_id)
+        return True

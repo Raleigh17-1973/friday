@@ -130,14 +130,23 @@ class ActivityService:
         self,
         entity_type: str,
         entity_id: str,
+        org_id: str | None = None,
         limit: int = 50,
     ) -> list[ActivityEntry]:
-        rows = self._conn.execute(
-            """SELECT * FROM activity
-               WHERE entity_type = ? AND entity_id = ?
-               ORDER BY created_at DESC LIMIT ?""",
-            (entity_type, entity_id, limit),
-        ).fetchall()
+        if org_id is None:
+            rows = self._conn.execute(
+                """SELECT * FROM activity
+                   WHERE entity_type = ? AND entity_id = ?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (entity_type, entity_id, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """SELECT * FROM activity
+                   WHERE org_id = ? AND entity_type = ? AND entity_id = ?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (org_id, entity_type, entity_id, limit),
+            ).fetchall()
         return [self._row_to_entry(r) for r in rows]
 
     def list_for_actor(

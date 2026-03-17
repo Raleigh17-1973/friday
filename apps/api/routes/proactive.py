@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from apps.api.deps import service
-from apps.api.security import AuthContext
+from apps.api.security import AuthContext, current_org_id
 
 router = APIRouter()
 
@@ -19,18 +19,23 @@ def _auth(request: Request) -> AuthContext:
 
 
 @router.get("/alerts")
-def list_alerts(org_id: str = "org-1", severity: Optional[str] = None) -> list[dict]:
-    return [asdict(a) for a in service.scanner.list_alerts(org_id=org_id, severity=severity)]
+def list_alerts(request: Request, org_id: str = "org-1", severity: Optional[str] = None) -> list[dict]:
+    return [asdict(a) for a in service.scanner.list_alerts(org_id=current_org_id(request), severity=severity)]
 
 
 @router.post("/alerts/{alert_id}/acknowledge")
-def acknowledge_alert(alert_id: str) -> dict:
+def acknowledge_alert(alert_id: str, request: Request) -> dict:
+    org_id = current_org_id(request)
+    alert = service.scanner.get_alert(alert_id)
+    if alert is None or alert.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Alert not found")
     service.scanner.acknowledge(alert_id)
     return {"status": "acknowledged"}
 
 
 @router.post("/alerts/scan")
-def run_proactive_scan(org_id: str = "org-1") -> dict:
+def run_proactive_scan(request: Request, org_id: str = "org-1") -> dict:
+    org_id = current_org_id(request)
     # Build scanner-compatible KPI dicts: scanner expects current_value, target_value, kpi_id, org_id
     kpi_status_list = service.kpis.kpi_status(org_id=org_id)
     scanner_kpis = [
@@ -72,7 +77,8 @@ def run_proactive_scan(org_id: str = "org-1") -> dict:
 
 
 @router.get("/digest/weekly")
-def weekly_digest(org_id: str = "org-1") -> dict:
+def weekly_digest(request: Request, org_id: str = "org-1") -> dict:
+    org_id = current_org_id(request)
     # Normalize KPIs: digest expects current_value, target_value
     kpi_status_list = service.kpis.kpi_status(org_id=org_id)
     digest_kpis = [

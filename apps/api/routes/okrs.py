@@ -20,6 +20,41 @@ def _auth(request: Request) -> AuthContext:
     )
 
 
+def _org_node_for_auth(node_id: str, auth: AuthContext):
+    node = service.okrs.get_org_node(node_id)
+    if not node or node.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="Org node not found")
+    return node
+
+
+def _period_for_auth(period_id: str, auth: AuthContext):
+    period = service.okrs.get_period(period_id)
+    if not period or period.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="Period not found")
+    return period
+
+
+def _objective_for_auth(objective_id: str, auth: AuthContext):
+    obj = service.okrs.get_objective(objective_id)
+    if not obj or obj.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="Objective not found")
+    return obj
+
+
+def _kpi_for_auth(kpi_id: str, auth: AuthContext):
+    kpi = service.okrs.get_kpi(kpi_id)
+    if not kpi or kpi.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="KPI not found")
+    return kpi
+
+
+def _initiative_for_auth(initiative_id: str, auth: AuthContext):
+    initiative = service.okrs._get_initiative(initiative_id)
+    if not initiative or initiative.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="Initiative not found")
+    return initiative
+
+
 # ── Pydantic models ──────────────────────────────────────────────────────────
 
 class OrgNodeCreate(BaseModel):
@@ -199,58 +234,63 @@ class MeetingGenerate(BaseModel):
 
 @router.get("/okrs/org-nodes")
 async def list_org_nodes(request: Request, org_id: str = Query("org-1")):
-    nodes = service.okrs.list_org_nodes(org_id=org_id)
+    auth = _auth(request)
+    nodes = service.okrs.list_org_nodes(org_id=auth.org_id)
     return {"org_nodes": [asdict(n) for n in nodes]}
 
 
 @router.post("/okrs/org-nodes")
 async def create_org_node(body: OrgNodeCreate, request: Request):
+    auth = _auth(request)
     node = service.okrs.create_org_node(
         name=body.name,
         node_type=body.node_type,
         parent_id=body.parent_id,
-        org_id=body.org_id,
-        owner_user_id=body.owner_user_id,
+        org_id=auth.org_id,
+        owner_user_id=auth.user_id,
     )
     return asdict(node)
 
 
 @router.get("/okrs/org-nodes/{node_id}")
 async def get_org_node(node_id: str, request: Request):
-    node = service.okrs.get_org_node(node_id)
-    if not node:
-        raise HTTPException(status_code=404, detail="Org node not found")
+    auth = _auth(request)
+    node = _org_node_for_auth(node_id, auth)
     return asdict(node)
 
 
 @router.put("/okrs/org-nodes/{node_id}")
 async def update_org_node(node_id: str, body: OrgNodeUpdate, request: Request):
-    node = service.okrs.get_org_node(node_id)
-    if not node:
-        raise HTTPException(status_code=404, detail="Org node not found")
+    auth = _auth(request)
+    _org_node_for_auth(node_id, auth)
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     updated = service.okrs.update_org_node(node_id, **updates)
     return asdict(updated)
 
 
 @router.get("/okrs/org-nodes/{node_id}/tree")
-async def get_org_subtree(node_id: str, org_id: str = Query("org-1")):
-    return service.okrs.get_org_tree(org_id=org_id, root_node_id=node_id)
+async def get_org_subtree(node_id: str, request: Request, org_id: str = Query("org-1")):
+    auth = _auth(request)
+    _org_node_for_auth(node_id, auth)
+    return service.okrs.get_org_tree(org_id=auth.org_id, root_node_id=node_id)
 
 
 # ── OKR Periods ──────────────────────────────────────────────────────────────
 
 @router.get("/okrs/periods")
 async def list_periods(
+    request: Request,
     org_id: str = Query("org-1"),
     status: Optional[str] = Query(None),
 ):
-    periods = service.okrs.list_periods(org_id=org_id, status=status)
+    auth = _auth(request)
+    periods = service.okrs.list_periods(org_id=auth.org_id, status=status)
     return {"periods": [asdict(p) for p in periods]}
 
 
 @router.post("/okrs/periods")
 async def create_period(body: PeriodCreate, request: Request):
+    auth = _auth(request)
     period = service.okrs.create_period(
         name=body.name,
         period_type=body.period_type,
@@ -258,13 +298,15 @@ async def create_period(body: PeriodCreate, request: Request):
         quarter=body.quarter,
         start_date=body.start_date,
         end_date=body.end_date,
-        org_id=body.org_id,
+        org_id=auth.org_id,
     )
     return asdict(period)
 
 
 @router.put("/okrs/periods/{period_id}")
 async def update_period(period_id: str, body: PeriodUpdate, request: Request):
+    auth = _auth(request)
+    _period_for_auth(period_id, auth)
     if body.status == "active":
         period = service.okrs.activate_period(period_id)
     elif body.status == "closed":
@@ -279,6 +321,7 @@ async def update_period(period_id: str, body: PeriodUpdate, request: Request):
 
 @router.get("/okrs/objectives")
 async def list_objectives(
+    request: Request,
     org_id: str = Query("org-1"),
     period_id: Optional[str] = Query(None),
     org_node_id: Optional[str] = Query(None),
@@ -286,8 +329,9 @@ async def list_objectives(
     objective_type: Optional[str] = Query(None),
     parent_id: Optional[str] = Query(None),
 ):
+    auth = _auth(request)
     objs = service.okrs.list_objectives(
-        org_id=org_id,
+        org_id=auth.org_id,
         period_id=period_id,
         org_node_id=org_node_id,
         status=status,
@@ -299,13 +343,16 @@ async def list_objectives(
 
 @router.post("/okrs/objectives")
 async def create_objective(body: ObjectiveCreate, request: Request):
+    auth = _auth(request)
+    _period_for_auth(body.period_id, auth)
+    _org_node_for_auth(body.org_node_id, auth)
     obj = service.okrs.create_objective(
         period_id=body.period_id,
         org_node_id=body.org_node_id,
         title=body.title,
         objective_type=body.objective_type,
-        owner_user_id=body.owner_user_id,
-        org_id=body.org_id,
+        owner_user_id=auth.user_id,
+        org_id=auth.org_id,
         description=body.description,
         rationale=body.rationale,
         parent_objective_id=body.parent_objective_id,
@@ -317,7 +364,7 @@ async def create_objective(body: ObjectiveCreate, request: Request):
     from packages.okrs.validation import OKRValidator
     validator = OKRValidator()
     existing = service.okrs.list_objectives(
-        org_id=body.org_id, period_id=body.period_id, org_node_id=body.org_node_id
+        org_id=auth.org_id, period_id=body.period_id, org_node_id=body.org_node_id
     )
     issues = validator.validate_objective(obj, [o for o in existing if o.objective_id != obj.objective_id])
     return {
@@ -328,14 +375,18 @@ async def create_objective(body: ObjectiveCreate, request: Request):
 
 @router.get("/okrs/objectives/{objective_id}")
 async def get_objective(objective_id: str, request: Request):
+    auth = _auth(request)
     detail = service.okrs.get_objective_with_details(objective_id)
-    if not detail:
+    obj = detail.get("objective") if detail else None
+    if not detail or not obj or obj.get("org_id") != auth.org_id:
         raise HTTPException(status_code=404, detail="Objective not found")
     return detail
 
 
 @router.put("/okrs/objectives/{objective_id}")
 async def update_objective(objective_id: str, body: ObjectiveUpdate, request: Request):
+    auth = _auth(request)
+    _objective_for_auth(objective_id, auth)
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     obj = service.okrs.update_objective(objective_id, **updates)
     return asdict(obj)
@@ -343,21 +394,24 @@ async def update_objective(objective_id: str, body: ObjectiveUpdate, request: Re
 
 @router.delete("/okrs/objectives/{objective_id}")
 async def archive_objective(objective_id: str, request: Request):
+    auth = _auth(request)
+    _objective_for_auth(objective_id, auth)
     obj = service.okrs.archive_objective(objective_id)
     return {"archived": True, "objective_id": obj.objective_id}
 
 
 @router.get("/okrs/objectives/{objective_id}/hierarchy")
-async def get_objective_hierarchy(objective_id: str):
+async def get_objective_hierarchy(objective_id: str, request: Request):
+    auth = _auth(request)
+    _objective_for_auth(objective_id, auth)
     return service.okrs.get_objective_hierarchy(objective_id)
 
 
 @router.post("/okrs/objectives/{objective_id}/validate")
 async def validate_objective(objective_id: str, request: Request):
     from packages.okrs.validation import OKRValidator
-    obj = service.okrs.get_objective(objective_id)
-    if not obj:
-        raise HTTPException(status_code=404, detail="Objective not found")
+    auth = _auth(request)
+    obj = _objective_for_auth(objective_id, auth)
     krs = service.okrs.list_key_results(objective_id)
     existing = service.okrs.list_objectives(org_id=obj.org_id, period_id=obj.period_id)
     validator = OKRValidator()
@@ -375,6 +429,8 @@ async def validate_objective(objective_id: str, request: Request):
 
 @router.post("/okrs/objectives/{objective_id}/grade")
 async def grade_objective(objective_id: str, body: ObjectiveGrade, request: Request):
+    auth = _auth(request)
+    _objective_for_auth(objective_id, auth)
     result = service.okrs.grade_objective(
         objective_id=objective_id,
         grade=body.grade,
@@ -386,17 +442,21 @@ async def grade_objective(objective_id: str, body: ObjectiveGrade, request: Requ
 
 
 @router.get("/okrs/objectives/{objective_id}/score")
-async def get_objective_score(objective_id: str):
+async def get_objective_score(objective_id: str, request: Request):
+    auth = _auth(request)
+    _objective_for_auth(objective_id, auth)
     score = service.okrs.compute_objective_score(objective_id)
     return {"objective_id": objective_id, "score": score}
 
 
 @router.post("/okrs/objectives/{objective_id}/checkins")
 async def create_objective_checkin(objective_id: str, body: CheckinCreate, request: Request):
+    auth = _auth(request)
+    _objective_for_auth(objective_id, auth)
     checkin = service.okrs.add_checkin(
         object_type="objective",
         object_id=objective_id,
-        user_id=body.user_id,
+        user_id=auth.user_id,
         checkin_date=body.checkin_date,
         current_value=body.current_value,
         confidence=body.confidence,
@@ -404,7 +464,7 @@ async def create_objective_checkin(objective_id: str, body: CheckinCreate, reque
         decisions_needed=body.decisions_needed,
         narrative_update=body.narrative_update,
         next_steps=body.next_steps,
-        org_id=body.org_id,
+        org_id=auth.org_id,
         parent_checkin_id=body.parent_checkin_id,
     )
     return asdict(checkin)
@@ -414,12 +474,14 @@ async def create_objective_checkin(objective_id: str, body: CheckinCreate, reque
 
 @router.post("/okrs/objectives/{objective_id}/key-results")
 async def create_key_result(objective_id: str, body: KeyResultCreate, request: Request):
+    auth = _auth(request)
+    _objective_for_auth(objective_id, auth)
     kr = service.okrs.create_key_result(
         objective_id=objective_id,
         title=body.title,
         kr_type=body.kr_type,
-        owner_user_id=body.owner_user_id,
-        org_id=body.org_id,
+        owner_user_id=auth.user_id,
+        org_id=auth.org_id,
         description=body.description,
         metric_name=body.metric_name,
         metric_definition=body.metric_definition,
@@ -438,6 +500,10 @@ async def create_key_result(objective_id: str, body: KeyResultCreate, request: R
 
 @router.put("/okrs/key-results/{kr_id}")
 async def update_key_result(kr_id: str, body: KeyResultUpdate, request: Request):
+    auth = _auth(request)
+    kr = service.okrs.get_key_result(kr_id)
+    if not kr or kr.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="Key result not found")
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     kr = service.okrs.update_key_result(kr_id, **updates)
     return asdict(kr)
@@ -445,16 +511,24 @@ async def update_key_result(kr_id: str, body: KeyResultUpdate, request: Request)
 
 @router.delete("/okrs/key-results/{kr_id}")
 async def delete_key_result(kr_id: str, request: Request):
+    auth = _auth(request)
+    kr = service.okrs.get_key_result(kr_id)
+    if not kr or kr.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="Key result not found")
     ok = service.okrs.delete_key_result(kr_id)
     return {"deleted": ok, "kr_id": kr_id}
 
 
 @router.post("/okrs/key-results/{kr_id}/checkins")
 async def create_kr_checkin(kr_id: str, body: CheckinCreate, request: Request):
+    auth = _auth(request)
+    kr = service.okrs.get_key_result(kr_id)
+    if not kr or kr.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="Key result not found")
     checkin = service.okrs.add_checkin(
         object_type="key_result",
         object_id=kr_id,
-        user_id=body.user_id,
+        user_id=auth.user_id,
         checkin_date=body.checkin_date,
         current_value=body.current_value,
         confidence=body.confidence,
@@ -462,7 +536,7 @@ async def create_kr_checkin(kr_id: str, body: CheckinCreate, request: Request):
         decisions_needed=body.decisions_needed,
         narrative_update=body.narrative_update,
         next_steps=body.next_steps,
-        org_id=body.org_id,
+        org_id=auth.org_id,
         parent_checkin_id=body.parent_checkin_id,
     )
     return asdict(checkin)
@@ -470,6 +544,11 @@ async def create_kr_checkin(kr_id: str, body: CheckinCreate, request: Request):
 
 @router.post("/okrs/key-results/{kr_id}/link-kpi")
 async def link_kpi_to_kr(kr_id: str, body: KPILink, request: Request):
+    auth = _auth(request)
+    kr = service.okrs.get_key_result(kr_id)
+    if not kr or kr.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="Key result not found")
+    _kpi_for_auth(body.kpi_id, auth)
     link = service.okrs.link_kr_to_kpi(
         kr_id=kr_id,
         kpi_id=body.kpi_id,
@@ -481,6 +560,11 @@ async def link_kpi_to_kr(kr_id: str, body: KPILink, request: Request):
 
 @router.delete("/okrs/key-results/{kr_id}/link-kpi/{kpi_id}")
 async def unlink_kpi_from_kr(kr_id: str, kpi_id: str, request: Request):
+    auth = _auth(request)
+    kr = service.okrs.get_key_result(kr_id)
+    if not kr or kr.org_id != auth.org_id:
+        raise HTTPException(status_code=404, detail="Key result not found")
+    _kpi_for_auth(kpi_id, auth)
     ok = service.okrs.unlink_kr_kpi(kr_id=kr_id, kpi_id=kpi_id)
     return {"unlinked": ok}
 
@@ -503,10 +587,12 @@ async def list_checkins(
 
 @router.get("/okrs/overdue-checkins")
 async def list_overdue_checkins(
+    request: Request,
     org_id: str = Query("org-1"),
     days: int = Query(10),
 ):
-    krs = service.okrs.list_overdue_checkins(org_id=org_id, days=days)
+    auth = _auth(request)
+    krs = service.okrs.list_overdue_checkins(org_id=auth.org_id, days=days)
     return {"overdue_key_results": [asdict(k) for k in krs], "count": len(krs)}
 
 
@@ -514,19 +600,22 @@ async def list_overdue_checkins(
 
 @router.get("/okrs/kpis")
 async def list_kpis(
+    request: Request,
     org_id: str = Query("org-1"),
     org_node_id: Optional[str] = Query(None),
 ):
-    kpis = service.okrs.list_kpis(org_id=org_id, org_node_id=org_node_id)
+    auth = _auth(request)
+    kpis = service.okrs.list_kpis(org_id=auth.org_id, org_node_id=org_node_id)
     return {"kpis": [asdict(k) for k in kpis]}
 
 
 @router.post("/okrs/kpis")
 async def create_kpi(body: KPICreate, request: Request):
+    auth = _auth(request)
     kpi = service.okrs.create_kpi(
         name=body.name,
         unit=body.unit,
-        org_id=body.org_id,
+        org_id=auth.org_id,
         org_node_id=body.org_node_id,
         description=body.description,
         metric_definition=body.metric_definition,
@@ -534,13 +623,15 @@ async def create_kpi(body: KPICreate, request: Request):
         target_band_low=body.target_band_low,
         target_band_high=body.target_band_high,
         update_frequency=body.update_frequency,
-        owner_user_id=body.owner_user_id,
+        owner_user_id=auth.user_id,
     )
     return asdict(kpi)
 
 
 @router.put("/okrs/kpis/{kpi_id}")
 async def update_kpi(kpi_id: str, body: KPIUpdate, request: Request):
+    auth = _auth(request)
+    _kpi_for_auth(kpi_id, auth)
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     kpi = service.okrs.update_kpi(kpi_id, **updates)
     return asdict(kpi)
@@ -548,12 +639,16 @@ async def update_kpi(kpi_id: str, body: KPIUpdate, request: Request):
 
 @router.post("/okrs/kpis/{kpi_id}/record")
 async def record_kpi_value(kpi_id: str, body: KPIRecordValue, request: Request):
+    auth = _auth(request)
+    _kpi_for_auth(kpi_id, auth)
     kpi = service.okrs.record_kpi_value(kpi_id=kpi_id, value=body.value)
     return asdict(kpi)
 
 
 @router.get("/okrs/kpis/{kpi_id}/trend")
-async def get_kpi_trend(kpi_id: str, limit: int = Query(30)):
+async def get_kpi_trend(kpi_id: str, request: Request, limit: int = Query(30)):
+    auth = _auth(request)
+    _kpi_for_auth(kpi_id, auth)
     return service.okrs.get_kpi_trend(kpi_id=kpi_id, limit=limit)
 
 
@@ -561,6 +656,7 @@ async def get_kpi_trend(kpi_id: str, limit: int = Query(30)):
 
 @router.post("/okrs/dependencies")
 async def create_dependency(body: DependencyCreate, request: Request):
+    auth = _auth(request)
     dep = service.okrs.create_dependency(
         source_type=body.source_object_type,
         source_id=body.source_object_id,
@@ -568,7 +664,7 @@ async def create_dependency(body: DependencyCreate, request: Request):
         target_id=body.target_object_id,
         dep_type=body.dependency_type,
         severity=body.severity,
-        org_id=body.org_id,
+        org_id=auth.org_id,
     )
     return asdict(dep)
 
@@ -596,24 +692,28 @@ async def delete_dependency(dep_id: str, request: Request):
 
 @router.get("/okrs/initiatives")
 async def list_initiatives(
+    request: Request,
     org_id: str = Query("org-1"),
     objective_id: Optional[str] = Query(None),
     kr_id: Optional[str] = Query(None),
 ):
+    auth = _auth(request)
     initiatives = service.okrs.list_initiatives(
-        org_id=org_id, objective_id=objective_id, kr_id=kr_id
+        org_id=auth.org_id, objective_id=objective_id, kr_id=kr_id
     )
     return {"initiatives": [asdict(i) for i in initiatives]}
 
 
 @router.post("/okrs/objectives/{objective_id}/initiatives")
 async def create_initiative(objective_id: str, body: InitiativeCreate, request: Request):
+    auth = _auth(request)
+    _objective_for_auth(objective_id, auth)
     initiative = service.okrs.create_initiative(
         title=body.title,
-        owner_user_id=body.owner_user_id,
+        owner_user_id=auth.user_id,
         linked_objective_id=objective_id,
         linked_key_result_id=None,
-        org_id=body.org_id,
+        org_id=auth.org_id,
         description=body.description,
         status=body.status,
         external_system_ref=body.external_system_ref,
@@ -623,6 +723,8 @@ async def create_initiative(objective_id: str, body: InitiativeCreate, request: 
 
 @router.put("/okrs/initiatives/{initiative_id}")
 async def update_initiative(initiative_id: str, body: InitiativeUpdate, request: Request):
+    auth = _auth(request)
+    _initiative_for_auth(initiative_id, auth)
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     initiative = service.okrs.update_initiative(initiative_id, **updates)
     return asdict(initiative)
@@ -632,20 +734,24 @@ async def update_initiative(initiative_id: str, body: InitiativeUpdate, request:
 
 @router.get("/okrs/alignment-graph")
 async def get_alignment_graph(
+    request: Request,
     org_id: str = Query("org-1"),
     period_id: Optional[str] = Query(None),
 ):
-    return service.okrs.get_alignment_graph(org_id=org_id, period_id=period_id)
+    auth = _auth(request)
+    return service.okrs.get_alignment_graph(org_id=auth.org_id, period_id=period_id)
 
 
 # ── Dashboards ───────────────────────────────────────────────────────────────
 
 @router.get("/okrs/dashboard/executive")
 async def executive_dashboard(
+    request: Request,
     org_id: str = Query("org-1"),
     period_id: Optional[str] = Query(None),
 ):
-    return service.okrs.executive_dashboard(org_id=org_id, period_id=period_id)
+    auth = _auth(request)
+    return service.okrs.executive_dashboard(org_id=auth.org_id, period_id=period_id)
 
 
 @router.get("/okrs/dashboard/portfolio")
@@ -666,28 +772,33 @@ async def team_dashboard(
 
 @router.get("/okrs/dashboard/analytics")
 async def analytics_dashboard(
+    request: Request,
     org_id: str = Query("org-1"),
 ):
-    return service.okrs.analytics_dashboard(org_id=org_id)
+    auth = _auth(request)
+    return service.okrs.analytics_dashboard(org_id=auth.org_id)
 
 
 # ── Meetings ─────────────────────────────────────────────────────────────────
 
 @router.post("/okrs/meetings/generate")
 async def generate_meeting(body: MeetingGenerate, request: Request):
+    auth = _auth(request)
     artifact = service.okrs.generate_meeting_artifact(
         meeting_type=body.meeting_type,
         org_node_id=body.org_node_id,
         period_id=body.period_id,
-        org_id=body.org_id,
+        org_id=auth.org_id,
     )
     return asdict(artifact)
 
 
 @router.get("/okrs/meetings")
 async def list_meeting_artifacts(
+    request: Request,
     org_id: str = Query("org-1"),
     meeting_type: Optional[str] = Query(None),
 ):
-    artifacts = service.okrs.list_meeting_artifacts(org_id=org_id, meeting_type=meeting_type)
+    auth = _auth(request)
+    artifacts = service.okrs.list_meeting_artifacts(org_id=auth.org_id, meeting_type=meeting_type)
     return {"artifacts": [asdict(a) for a in artifacts]}

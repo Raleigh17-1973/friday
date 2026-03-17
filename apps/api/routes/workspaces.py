@@ -18,6 +18,22 @@ def _auth(request: Request) -> AuthContext:
     )
 
 
+def _workspace_for_auth(workspace_id: str, request: Request):
+    auth = _auth(request)
+    ws = service.workspaces.get_for_org(workspace_id, auth.org_id)
+    if ws is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return ws
+
+
+def _project_for_auth(project_id: str, request: Request):
+    project = service.projects.get(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    _workspace_for_auth(project.workspace_id, request)
+    return project
+
+
 class WorkspaceCreate(BaseModel):
     name: str
     description: str = ""
@@ -55,17 +71,19 @@ class ProjectUpdate(BaseModel):
 
 
 @router.get("/workspaces")
-def list_workspaces(org_id: str = "default") -> list[dict]:
-    workspaces = service.workspaces.list(org_id=org_id)
+def list_workspaces(request: Request, org_id: str = "default") -> list[dict]:
+    auth = _auth(request)
+    workspaces = service.workspaces.list(org_id=auth.org_id)
     return [asdict(w) for w in workspaces]
 
 
 @router.post("/workspaces", status_code=201)
-def create_workspace(payload: WorkspaceCreate) -> dict:
+def create_workspace(payload: WorkspaceCreate, request: Request) -> dict:
+    auth = _auth(request)
     ws = service.workspaces.create(
         name=payload.name,
-        org_id=payload.org_id,
-        owner=payload.owner,
+        org_id=auth.org_id,
+        owner=auth.user_id,
         type=payload.type,
         description=payload.description,
         icon=payload.icon,
@@ -77,61 +95,73 @@ def create_workspace(payload: WorkspaceCreate) -> dict:
 
 
 @router.get("/workspaces/{workspace_id}")
-def get_workspace(workspace_id: str) -> dict:
-    ws = service.workspaces.get(workspace_id)
-    if ws is None:
-        raise HTTPException(status_code=404, detail="Not found")
+def get_workspace(workspace_id: str, request: Request) -> dict:
+    ws = _workspace_for_auth(workspace_id, request)
     return asdict(ws)
 
 
 @router.put("/workspaces/{workspace_id}")
-def update_workspace(workspace_id: str, payload: dict) -> dict:
-    ws = service.workspaces.update(workspace_id, **payload)
+def update_workspace(workspace_id: str, payload: dict, request: Request) -> dict:
+    auth = _auth(request)
+    ws = service.workspaces.update_for_org(workspace_id, auth.org_id, **payload)
     if ws is None:
         raise HTTPException(status_code=404, detail="Not found")
     return asdict(ws)
 
 
 @router.post("/workspaces/{workspace_id}/archive")
-def archive_workspace(workspace_id: str) -> dict:
-    service.workspaces.archive(workspace_id)
+def archive_workspace(workspace_id: str, request: Request) -> dict:
+    auth = _auth(request)
+    if not service.workspaces.archive_for_org(workspace_id, auth.org_id):
+        raise HTTPException(status_code=404, detail="Not found")
     return {"status": "archived", "workspace_id": workspace_id}
 
 
 @router.delete("/workspaces/{workspace_id}", status_code=204)
-def delete_workspace(workspace_id: str) -> None:
+def delete_workspace(workspace_id: str, request: Request) -> None:
     """Delete (archive) a workspace. Admin-only by convention; enforced in the frontend."""
-    service.workspaces.archive(workspace_id)
+    auth = _auth(request)
+    if not service.workspaces.archive_for_org(workspace_id, auth.org_id):
+        raise HTTPException(status_code=404, detail="Not found")
 
 
 @router.get("/workspaces/{workspace_id}/members")
-def list_workspace_members(workspace_id: str) -> list[dict]:
-    members = service.workspaces.list_members(workspace_id)
+def list_workspace_members(workspace_id: str, request: Request) -> list[dict]:
+    auth = _auth(request)
+    members = service.workspaces.list_members_for_org(workspace_id, auth.org_id)
+    if not members and service.workspaces.get_for_org(workspace_id, auth.org_id) is None:
+        raise HTTPException(status_code=404, detail="Not found")
     return [asdict(m) for m in members]
 
 
 @router.post("/workspaces/{workspace_id}/members", status_code=201)
-def add_workspace_member(workspace_id: str, payload: WorkspaceMemberAdd) -> dict:
-    member = service.workspaces.add_member(workspace_id, user_id=payload.user_id, role=payload.role)
+def add_workspace_member(workspace_id: str, payload: WorkspaceMemberAdd, request: Request) -> dict:
+    auth = _auth(request)
+    member = service.workspaces.add_member_for_org(workspace_id, auth.org_id, user_id=payload.user_id, role=payload.role)
+    if member is None:
+        raise HTTPException(status_code=404, detail="Not found")
     return asdict(member)
 
 
 @router.delete("/workspaces/{workspace_id}/members/{user_id}", status_code=204)
-def remove_workspace_member(workspace_id: str, user_id: str) -> None:
-    service.workspaces.remove_member(workspace_id, user_id)
+def remove_workspace_member(workspace_id: str, user_id: str, request: Request) -> None:
+    auth = _auth(request)
+    if not service.workspaces.remove_member_for_org(workspace_id, auth.org_id, user_id):
+        raise HTTPException(status_code=404, detail="Not found")
 
 
 @router.post("/workspaces/{workspace_id}/link", status_code=201)
-def link_workspace_entity(workspace_id: str, payload: WorkspaceLinkCreate) -> dict:
-    link = service.workspaces.link_entity(workspace_id, entity_type=payload.entity_type, entity_id=payload.entity_id)
+def link_workspace_entity(workspace_id: str, payload: WorkspaceLinkCreate, request: Request) -> dict:
+    auth = _auth(request)
+    link = service.workspaces.link_entity_for_org(workspace_id, auth.org_id, entity_type=payload.entity_type, entity_id=payload.entity_id)
+    if link is None:
+        raise HTTPException(status_code=404, detail="Not found")
     return asdict(link)
 
 
 @router.get("/workspaces/{workspace_id}/overview")
-def workspace_overview(workspace_id: str) -> dict:
-    ws = service.workspaces.get(workspace_id)
-    if ws is None:
-        raise HTTPException(status_code=404, detail="Not found")
+def workspace_overview(workspace_id: str, request: Request) -> dict:
+    ws = _workspace_for_auth(workspace_id, request)
     members = service.workspaces.list_members(workspace_id)
     return {
         "workspace": asdict(ws),
@@ -141,12 +171,14 @@ def workspace_overview(workspace_id: str) -> dict:
 
 
 @router.get("/workspaces/{workspace_id}/projects")
-def list_projects(workspace_id: str) -> list[dict]:
+def list_projects(workspace_id: str, request: Request) -> list[dict]:
+    _workspace_for_auth(workspace_id, request)
     return [p.to_dict() for p in service.projects.list(workspace_id)]
 
 
 @router.post("/workspaces/{workspace_id}/projects", status_code=201)
-def create_project(workspace_id: str, payload: ProjectCreate) -> dict:
+def create_project(workspace_id: str, payload: ProjectCreate, request: Request) -> dict:
+    _workspace_for_auth(workspace_id, request)
     project = service.projects.create(
         workspace_id=workspace_id,
         name=payload.name,
@@ -158,13 +190,20 @@ def create_project(workspace_id: str, payload: ProjectCreate) -> dict:
 
 
 @router.put("/projects/{project_id}")
-def update_project(project_id: str, payload: ProjectUpdate) -> dict:
-    project = service.projects.update(project_id, **payload.model_dump(exclude_none=True))
+def update_project(project_id: str, payload: ProjectUpdate, request: Request) -> dict:
+    project = _project_for_auth(project_id, request)
+    project = service.projects.update_for_workspace(
+        project_id,
+        project.workspace_id,
+        **payload.model_dump(exclude_none=True),
+    )
     if project is None:
         raise HTTPException(status_code=404, detail="Not found")
     return project.to_dict()
 
 
 @router.delete("/projects/{project_id}", status_code=204)
-def delete_project(project_id: str) -> None:
-    service.projects.delete(project_id)
+def delete_project(project_id: str, request: Request) -> None:
+    project = _project_for_auth(project_id, request)
+    if not service.projects.delete_for_workspace(project_id, project.workspace_id):
+        raise HTTPException(status_code=404, detail="Not found")

@@ -1,7 +1,8 @@
 from pathlib import Path
+import sqlite3
 
 from packages.agents.registry import AgentRegistry
-from packages.common.models import ChatRequest
+from packages.common.models import ApprovalRequest, ChatRequest
 from packages.governance.approvals import ApprovalService
 from packages.governance.audit import AuditLog
 from packages.governance.policy import PolicyEngine
@@ -44,6 +45,72 @@ def test_memory_candidates_can_be_promoted_with_approval(tmp_path: Path) -> None
 
     promote_with_approval = manager._memory.promote_candidate(proposal["candidate_id"], approved=True)
     assert promote_with_approval["status"] == "promoted"
+
+
+def test_approval_service_loads_legacy_sqlite_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "approvals.sqlite3"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE approvals ("
+        "approval_id TEXT PRIMARY KEY, "
+        "run_id TEXT, "
+        "reason TEXT, "
+        "action_summary TEXT, "
+        "requested_scopes TEXT, "
+        "created_at TEXT, "
+        "status TEXT, "
+        "assignee TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO approvals (approval_id, run_id, reason, action_summary, requested_scopes, created_at, status, assignee) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "appr-legacy",
+            "run-legacy",
+            "legacy reason",
+            "legacy action",
+            '["crm.write"]',
+            "2026-03-17T00:00:00Z",
+            "pending",
+            "reviewer-1",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    service = ApprovalService(db_path=db_path)
+
+    approval = service.get("appr-legacy")
+    assert approval.run_id == "run-legacy"
+    assert approval.requested_scopes == ["crm.write"]
+    assert approval.assignee == "reviewer-1"
+
+    check = sqlite3.connect(db_path)
+    data = check.execute(
+        "SELECT data FROM approvals WHERE approval_id = ?",
+        ("appr-legacy",),
+    ).fetchone()[0]
+    check.close()
+    assert "legacy action" in data
+
+
+def test_approval_service_creates_fresh_sqlite_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "approvals.sqlite3"
+    service = ApprovalService(db_path=db_path)
+    service.create(
+        ApprovalRequest(
+            approval_id="appr-fresh",
+            run_id="run-fresh",
+            reason="need approval",
+            action_summary="approve this write",
+            requested_scopes=["crm.write"],
+        )
+    )
+
+    reloaded = ApprovalService(db_path=db_path)
+    approval = reloaded.get("appr-fresh")
+    assert approval.status == "pending"
+    assert approval.requested_scopes == ["crm.write"]
 
 
 def test_research_requests_include_web_research_tool_call(tmp_path: Path) -> None:

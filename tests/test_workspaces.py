@@ -31,6 +31,11 @@ class TestWorkspaceCreateAndRetrieve:
     def test_get_nonexistent_returns_none(self, svc: WorkspaceService):
         assert svc.get("nonexistent_id_xyz") is None
 
+    def test_get_for_org_rejects_other_org(self, svc: WorkspaceService):
+        ws = svc.create(name="Engineering", type="team", owner="alice", org_id="org1")
+        assert svc.get_for_org(ws.workspace_id, "org2") is None
+        assert svc.get_for_org(ws.workspace_id, "org1") is not None
+
     def test_list_returns_workspaces(self, svc: WorkspaceService):
         svc.create(name="Alpha", type="team", owner="alice", org_id="org1")
         svc.create(name="Beta", type="team", owner="bob", org_id="org1")
@@ -100,6 +105,12 @@ class TestWorkspaceMemberAddRemove:
         members = svc.list_members(ws.workspace_id)
         assert isinstance(members, list)
 
+    def test_member_operations_for_org_reject_other_org(self, svc: WorkspaceService):
+        ws = svc.create(name="Team", type="team", owner="alice", org_id="org1")
+        assert svc.add_member_for_org(ws.workspace_id, "org2", "bob") is None
+        assert svc.list_members_for_org(ws.workspace_id, "org2") == []
+        assert svc.remove_member_for_org(ws.workspace_id, "org2", "alice") is False
+
 
 # ---------------------------------------------------------------------------
 # Entity linking
@@ -139,6 +150,11 @@ class TestWorkspaceLinkEntity:
         ids = [lk.entity_id for lk in links]
         assert "doc_1" in ids and "doc_2" in ids and "doc_3" in ids
 
+    def test_link_for_org_rejects_other_org(self, svc: WorkspaceService):
+        ws = svc.create(name="Team", type="team", owner="alice", org_id="org1")
+        assert svc.link_entity_for_org(ws.workspace_id, "org2", "document", "doc_1") is None
+        assert svc.list_linked_for_org(ws.workspace_id, "org2") == []
+
 
 # ---------------------------------------------------------------------------
 # Filtering and update
@@ -173,3 +189,8 @@ class TestWorkspaceListFiltered:
         summary = svc.get_context_summary(ws.workspace_id)
         assert isinstance(summary, str)
         assert len(summary) > 0
+
+    def test_update_and_archive_for_org_reject_other_org(self, svc: WorkspaceService):
+        ws = svc.create(name="Team", type="team", owner="alice", org_id="org1")
+        assert svc.update_for_org(ws.workspace_id, "org2", name="Nope") is None
+        assert svc.archive_for_org(ws.workspace_id, "org2") is False
